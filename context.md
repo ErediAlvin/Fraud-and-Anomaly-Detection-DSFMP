@@ -59,11 +59,16 @@ As of today:
 
 ### 2.3 Machine Learning Layer (`backend/ml/`)
 
-**Current Status:** 🔴 **Unimplemented (Directory contains only `.gitkeep`)**  
+**Current Status:** 🟡 **In Progress (Synthetic Data Generator & Isolation Forest Complete)**  
 **Handout Requirements:**
 
 1. **Isolation Forest (25% Weight):**
    - Tabular anomaly detection for transactions and meal record spikes.
+   - ✅ Synthetic transaction dataset generated using Python `Faker` (`ml/datasets/generate_synthetic_data.py`).
+   - ✅ Feature extraction & preprocessing pipeline (`ml/features/preprocessing.py`).
+   - ✅ Model wrapper with $[0.0, 1.0]$ calibrated scoring (`ml/models/isolation_forest.py`).
+   - ✅ Training pipeline with evaluation metrics (`ml/training/train_outlier_model.py`, ROC-AUC: 0.9422).
+   - ✅ Model artifact saved to `ml/saved_models/isolation_forest_v1.joblib`.
 2. **Autoencoder (30% Weight):**
    - Deep reconstruction error detection for multivariate behavioral anomalies.
 3. **LSTM Autoencoder (25% Weight):**
