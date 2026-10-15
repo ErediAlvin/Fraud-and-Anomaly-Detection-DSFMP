@@ -501,8 +501,12 @@ To ensure day-to-day data integrity, the system implements **Start-of-Business (
   - [x] Transaction & supply chain delivery monitors
   - [x] System settings, RBAC provisioning & immutable audit logs
 - [ ] **Phase 3: Deep ML & Blockchain Integration**
-  - [ ] Model training pipelines & feature extractors
-  - [ ] Real-time scoring inference service (`POST /api/ml/score`)
+  - [x] Synthetic data generator with Faker (10,000 transactions, 4 fraud vectors)
+  - [x] Data cleaning & feature preprocessing pipeline (cyclical hour encoding, log scaling)
+  - [x] Isolation Forest tabular anomaly detection model (ROC-AUC 0.9422, calibrated scoring)
+  - [ ] Autoencoder & temporal LSTM reconstruction models
+  - [ ] Graph Neural Network (GNN) entity relationship engine
+  - [ ] Real-time scoring inference service (`POST /api/ml/score-transaction`)
   - [ ] Cryptographic ledger audit verification
   - [ ] Full interactive Kanban drag-and-drop state mutation & investigator comment threads
 
