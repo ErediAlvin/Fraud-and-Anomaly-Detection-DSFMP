@@ -98,9 +98,9 @@ async def get_reports_data(db: AsyncSession = Depends(get_db)):
     """
     res_result = await db.execute(text(res_query))
     res_row = res_result.fetchone()
-    true_f = res_row[0] or 0 if res_row else 0
-    false_p = res_row[1] or 0 if res_row else 0
-    pend = res_row[2] or 0 if res_row else 0
+    true_f = int(res_row[0] or 0) if res_row else 0
+    false_p = int(res_row[1] or 0) if res_row else 0
+    pend = int(res_row[2] or 0) if res_row else 0
     total = true_f + false_p + pend or 1
 
     resolution_data = [

@@ -45,7 +45,7 @@ As of October 2026:
 | **Auth** | `/api/auth` | ✅ Complete | `POST /login`, `POST /verify-2fa`, `POST /refresh`, `POST /logout`, `GET /me` |
 | **Dashboard** | `/api/dashboard` | ✅ Complete | `GET /` — Stat card metrics, recent alerts, risk distribution (pie chart), county concentration, SOB/COB status, top flagged entities, 14-day trend |
 | **Fraud Alerts** | `/api/alerts` | 🟡 Partial | `GET /` — Filters (tier, status, alert_type, search).<br>*(Pending: Dismiss alert, acknowledge, escalate alert to case)* |
-| **Case Management** | `/api/cases` | 🟡 Partial | `GET /` — Stage breakdown for Kanban and list view, SLA counters.<br>*(Pending: Change stage, add comments, upload attachments, assign investigator)* |
+| **Case Management** | `/api/cases` | ✅ Complete | `GET /` (list, search, Kanban stats, SLA tracking)<br>`GET /{id}` (full forensic dossier, linked alerts, SLA timers)<br>`POST /` (open case or convert from fraud alert)<br>`PATCH /{id}/status` (stage progression & closure reasons)<br>`POST /{id}/assign` (investigator assignment with in-app notification)<br>`GET/POST /{id}/comments` (collaboration thread) |
 | **Beneficiaries** | `/api/beneficiaries` | ✅ Working | `GET /` — County/tier filtering, enrollment trend.<br>`POST /{id}/flag`, `POST /{id}/clear` |
 | **Transactions** | `/api/transactions` | ✅ Working | `GET /` — Filter by type, tier, search, hourly volume, amount distribution.<br>`POST /{id}/investigate`, `POST /{id}/clear` |
 | **Supply Chain** | `/api/supply-chain` | ✅ Working | `GET /` — Active/flagged supplier counts, delivery variance stats.<br>`GET /suppliers/{id}` — Full supplier dossier, orders, deliveries, schools.<br>`POST /suppliers/{id}/flag` — Elevate supplier risk tier to CRITICAL.<br>`POST /suppliers/{id}/clear` — Reset supplier risk to LOW.<br>`GET /network` — Topological graph data (nodes & links) for supplier-school network. |
@@ -81,10 +81,10 @@ As of October 2026:
    - ✅ Model Wrapper (`ml/models/isolation_forest.py`): 200 estimators, 5% contamination, random seed 42. Calibrates raw decision scores into a standardized $[0.0, 1.0]$ anomaly score.
    - ✅ Training & Evaluation Pipeline (`ml/training/train_outlier_model.py`):
      - **ROC-AUC Score:** `0.9422`
-     - **Precision:** `78.4%`
-     - **Recall:** `82.1%`
-     - **F1-Score:** `0.8021`
-     - **Confusion Matrix:** TN: 1,845 | FP: 45 | FN: 19 | TP: 87
+     - **Precision:** `33.61%` (0.3361)
+     - **Recall:** `82.65%` (0.8265 — 81/98 fraud records caught)
+     - **F1-Score:** `0.4779`
+     - **Confusion Matrix:** TN: 1,742 | FP: 160 | FN: 17 | TP: 81
    - ✅ Model Artifact: Persisted and ready for inference at `ml/saved_models/isolation_forest_v1.joblib` (~2.8 MB).
 
 5. **Autoencoder (30% Weight):**
@@ -140,11 +140,12 @@ As of October 2026:
 - [x] **Supply Chain Actions:** Added `GET /suppliers/{id}`, `POST /flag`, `POST /clear`, and `GET /network` topology graph.
 - [x] **Risk Profile Actions:** Added `GET /{id}` dossier, `PATCH /{id}/status` (CLEAN/WATCHLIST/SUSPENDED), and `POST /{id}/recalculate`.
 - [x] **Report Generation:** Added `GET /export` streaming dynamic CSV files.
-- [ ] **Case Management Actions:**
+- [x] **Case Management Actions:**
   - `PATCH /api/cases/{id}/status` (Update stage: `DETECTED` $\to$ `TRIAGED` $\to$ `UNDER_INVESTIGATION` $\to$ `ESCALATED` $\to$ `RESOLVED`).
   - `POST /api/cases` (Create case directly or from an existing `fraud_alert`).
-  - `POST /api/cases/{id}/comments` and `GET /api/cases/{id}/comments`.
-  - `POST /api/cases/{id}/assign` (Assign to investigator).
+  - `GET /api/cases/{id}` (Detailed single-case dossier with linked evidence, timeline, SLA timers).
+  - `POST /api/cases/{id}/comments` and `GET /api/cases/{id}/comments` (Investigator collaboration thread).
+  - `POST /api/cases/{id}/assign` (Assign to investigator with in-app notification).
 - [ ] **Alert Actions:**
   - `POST /api/alerts/{id}/dismiss` (Mark as false positive with reason for model feedback).
   - `POST /api/alerts/{id}/escalate` (Instantly generate a Case from an Alert).

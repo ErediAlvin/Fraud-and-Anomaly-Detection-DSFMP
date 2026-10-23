@@ -36,7 +36,7 @@ async def get_alerts(
             fa.created_at as triggeredAt, 
             fa.status,
             COALESCE(CONCAT(u.first_name, ' ', u.last_name), 'Unassigned') as assignedTo,
-            (SELECT tx_hash FROM blockchain_ledger WHERE entity_type = 'fraud_alerts' AND entity_id = fa.id LIMIT 1) as blockchainHash,
+            (SELECT tx_id FROM blockchain_ledger WHERE entity_type = 'fraud_alerts' AND entity_id = fa.id LIMIT 1) as blockchainHash,
             fa.description
         FROM fraud_alerts fa
         LEFT JOIN users u ON fa.assigned_to = u.id
@@ -95,10 +95,10 @@ async def get_alerts(
         alerts.append({
             "id": row[0],
             "tier": row[1],
-            "entityType": row[2].upper(),
+            "entityType": (row[2] or "SYSTEM").upper(),
             "entityName": row[3] or "Unknown Entity",
-            "alertType": a_type.replace("_", " "),
-            "compositeScore": float(row[5]),
+            "alertType": (a_type or "OTHER").replace("_", " "),
+            "compositeScore": float(row[5]) if row[5] is not None else 0.0,
             "modelScores": {
                 "IF": float(row[6]) if row[6] is not None else 0.0,
                 "AE": float(row[7]) if row[7] is not None else 0.0,

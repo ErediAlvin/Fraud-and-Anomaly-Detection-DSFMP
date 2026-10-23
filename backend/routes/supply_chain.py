@@ -176,9 +176,7 @@ async def get_supplier_detail(supplier_id: str, db: AsyncSession = Depends(get_d
     # 2. Recent orders
     orders_res = await db.execute(
         text("""
-            SELECT po.id, po.order_number, sch.name as school_name, po.item_description,
-                   po.quantity_ordered, po.unit_of_measure, po.unit_price, po.total_amount,
-                   po.status, po.order_date
+            SELECT po.id, sch.name as school_name, po.total_amount, po.status, po.order_date, po.items_json
             FROM procurement_orders po
             LEFT JOIN schools sch ON po.school_id = sch.id
             WHERE po.supplier_id = :id
@@ -189,27 +187,36 @@ async def get_supplier_detail(supplier_id: str, db: AsyncSession = Depends(get_d
     )
     orders = []
     for r in orders_res.all():
+        items_data = r[5]
+        if isinstance(items_data, str):
+            try:
+                items_data = json.loads(items_data)
+            except Exception:
+                items_data = []
+        first_item = items_data[0] if isinstance(items_data, list) and items_data and isinstance(items_data[0], dict) else {}
+        item_name = first_item.get("item", "Maize & Beans")
+        qty = first_item.get("quantity", 1000)
         orders.append({
             "id": r[0],
-            "orderNumber": r[1],
-            "schoolName": r[2] or "School",
-            "item": r[3] or "Maize & Beans",
-            "quantity": f"{float(r[4]):,} {r[5] or 'KG'}",
-            "amount": float(r[7]),
-            "status": r[8],
-            "date": r[9].strftime("%Y-%m-%d") if r[9] else "",
+            "orderNumber": f"PO-{r[0][:8].upper()}",
+            "schoolName": r[1] or "School",
+            "item": item_name,
+            "quantity": f"{qty:,} KG" if isinstance(qty, (int, float)) else f"{qty} KG",
+            "amount": float(r[2]) if r[2] is not None else 0.0,
+            "status": r[3],
+            "date": r[4].strftime("%Y-%m-%d") if r[4] else "",
         })
 
     # 3. Deliveries
     deliv_res = await db.execute(
         text("""
-            SELECT d.id, d.delivery_note_no, sch.name as school_name, d.quantity_delivered,
-                   po.quantity_ordered, d.status, d.discrepancy_reason, d.delivery_date, d.blockchain_status
+            SELECT d.id, sch.name as school_name, d.quantity_delivered,
+                   d.quantity_ordered, d.status, d.notes, d.delivered_at, d.blockchain_status
             FROM deliveries d
             JOIN procurement_orders po ON d.procurement_order_id = po.id
             LEFT JOIN schools sch ON po.school_id = sch.id
             WHERE po.supplier_id = :id
-            ORDER BY d.delivery_date DESC
+            ORDER BY d.delivered_at DESC
             LIMIT 10
         """),
         {"id": supplier_id},
@@ -218,14 +225,14 @@ async def get_supplier_detail(supplier_id: str, db: AsyncSession = Depends(get_d
     for r in deliv_res.all():
         deliveries.append({
             "id": r[0],
-            "noteNo": r[1],
-            "schoolName": r[2] or "School",
-            "delivered": float(r[3]),
-            "ordered": float(r[4]),
-            "status": r[5],
-            "discrepancyReason": r[6] or "",
-            "date": r[7].strftime("%Y-%m-%d") if r[7] else "",
-            "blockchainStatus": r[8],
+            "noteNo": f"DN-{r[0][:8].upper()}",
+            "schoolName": r[1] or "School",
+            "delivered": float(r[2]) if r[2] is not None else 0.0,
+            "ordered": float(r[3]) if r[3] is not None else 0.0,
+            "status": r[4],
+            "discrepancyReason": r[5] or "",
+            "date": r[6].strftime("%Y-%m-%d") if r[6] else "",
+            "blockchainStatus": r[7] or "CONFIRMED",
         })
 
     # 4. Schools served
@@ -256,15 +263,15 @@ async def get_supplier_detail(supplier_id: str, db: AsyncSession = Depends(get_d
             "id": supp_row[0],
             "name": supp_row[1],
             "registrationNo": supp_row[2] or "CPR/2024/9912",
-            "taxPin": supp_row[3] or "P051283921X",
-            "contactPerson": supp_row[4] or "Director",
-            "phone": supp_row[5] or "+254700000000",
-            "email": supp_row[6] or "info@supplier.co.ke",
-            "isActive": bool(supp_row[7]),
-            "riskScore": float(supp_row[8]) if supp_row[8] is not None else 0.1,
-            "tier": supp_row[9] or "LOW",
-            "blockchainStatus": supp_row[10] or "CONFIRMED",
-            "county": supp_row[11] or "Nairobi",
+            "taxPin": "P051283921X",
+            "contactPerson": supp_row[3] or "Director",
+            "phone": supp_row[4] or "+254700000000",
+            "email": supp_row[5] or "info@supplier.co.ke",
+            "isActive": bool(supp_row[6]),
+            "riskScore": float(supp_row[7]) if supp_row[7] is not None else 0.1,
+            "tier": supp_row[8] or "LOW",
+            "blockchainStatus": supp_row[9] or "CONFIRMED",
+            "county": supp_row[10] or "Nairobi",
         },
         "orders": orders,
         "deliveries": deliveries,

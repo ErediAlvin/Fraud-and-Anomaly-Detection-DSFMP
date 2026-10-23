@@ -475,6 +475,7 @@ CREATE TABLE IF NOT EXISTS `risk_profiles` (
   `entity_id`       CHAR(36)        NOT NULL,
   `composite_score` DECIMAL(5,4)    NOT NULL,
   `risk_tier`       ENUM('LOW','MEDIUM','HIGH','CRITICAL') NOT NULL,
+  `status`          ENUM('CLEAN','WATCHLIST','SUSPENDED') NOT NULL DEFAULT 'CLEAN',
   `if_score`        DECIMAL(5,4)    NULL,
   `ae_score`        DECIMAL(5,4)    NULL,
   `lstm_score`      DECIMAL(5,4)    NULL,
