@@ -56,7 +56,7 @@
 | **Authentication** | `/api/auth` | `POST /login`, `POST /verify-2fa`, `POST /refresh`, `POST /logout`, `GET /me` | ✅ 100% |
 | **Executive Dashboard** | `/api/dashboard` | `GET /` (KPI cards, risk distribution, 14-day trend, county concentrations, top flagged entities) | ✅ 100% |
 | **Fraud Alerts** | `/api/alerts` | `GET /` (Multi-factor filter: severity, status, alert_type, search text) | 🟡 70% |
-| **Case Management** | `/api/cases` | `GET /` (Kanban stage aggregation, SLA overdue tracking, case list) | 🟡 50% |
+| **Case Management** | `/api/cases` | `GET /` (Kanban stage aggregation, SLA tracking)<br>`GET /{id}` (dossier, linked alerts, timeline)<br>`POST /` (create case / escalate from alert)<br>`PATCH /{id}/status` (Kanban stage transition)<br>`POST /{id}/assign` (investigator assignment)<br>`GET/POST /{id}/comments` (investigator collaboration thread) | ✅ 100% |
 | **Beneficiaries Monitor** | `/api/beneficiaries` | `GET /` (Ghost student detection, enrollment statistics)<br>`POST /{id}/flag`, `POST /{id}/clear` | ✅ 100% |
 | **Transactions Monitor** | `/api/transactions` | `GET /` (Audit volume, hourly distribution, search)<br>`POST /{id}/investigate`, `POST /{id}/clear` | ✅ 100% |
 | **Supply Chain Monitor** | `/api/supply-chain` | `GET /` (Variance metrics, delivery mismatches)<br>`GET /suppliers/{id}` (Supplier dossier, orders, schools)<br>`POST /suppliers/{id}/flag`, `POST /suppliers/{id}/clear`<br>`GET /network` (Graph network nodes and links for collusion analysis) | ✅ 100% |
@@ -100,22 +100,25 @@
 
 ### 4.4 Isolation Forest Model Evaluation (`ml/training/train_outlier_model.py`)
 - **Hyperparameters:** `n_estimators=200`, `contamination=0.05`, `random_state=42`.
-- **Score Calibration:** Linear mapping of decision function scores to $[0.0, 1.0]$.
-- **Test Set Benchmark Results:**
+- **Classification Threshold:** `0.65`
+- **Score Calibration:** Linear mapping of raw decision function scores to standardized $[0.0, 1.0]$.
+- **Test Set Benchmark Results (2,000 Test Records with 98 Frauds):**
   - **ROC-AUC Score:** **0.9422**
-  - **Precision:** **78.4%**
-  - **Recall:** **82.1%**
-  - **F1-Score:** **0.8021**
-- **Confusion Matrix (2,000 Test Records):**
-  - True Negatives (TN): **1,845**
-  - False Positives (FP): **45**
-  - False Negatives (FN): **19**
-  - True Positives (TP): **87**
-- **Detection Rate by Fraud Pattern:**
-  - `off_hours_spike`: 92.3% caught
-  - `abnormal_amount`: 88.5% caught
-  - `ghost_subsidy_leakage`: 76.9% caught
-  - `structuring_split`: 68.2% caught
+  - **Precision:** **33.61%** (0.3361)
+  - **Recall:** **82.65%** (0.8265 — 81 of 98 fraud records caught)
+  - **F1-Score:** **0.4779**
+- **Confusion Matrix:**
+  - True Negatives (TN): **1,742**
+  - False Positives (FP): **160**
+  - False Negatives (FN): **17**
+  - True Positives (TP): **81**
+- **Detection Rate Breakdown by Fraud Pattern:**
+  - `DISPROPORTIONATE_PER_STUDENT`: **21/21 caught (100.0%)** | Avg Score: `0.831`
+  - `OFF_HOURS_DRAIN`: **16/16 caught (100.0%)** | Avg Score: `0.948`
+  - `SUSPICIOUS_PAYMENT_METHOD`: **18/18 caught (100.0%)** | Avg Score: `0.846`
+  - `EXTREME_AMOUNT_OUTLIER`: **15/16 caught (93.8%)** | Avg Score: `0.842`
+  - `VELOCITY_BURST_SMURFING`: **7/12 caught (58.3%)** | Avg Score: `0.652`
+  - `ROUND_NUMBER_DRAIN`: **4/15 caught (26.7%)** | Avg Score: `0.540`
 - **Serialized Artifact:** Saved and ready for production inference at `ml/saved_models/isolation_forest_v1.joblib` (2.8 MB).
 
 ---

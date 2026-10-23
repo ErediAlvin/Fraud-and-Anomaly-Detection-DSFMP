@@ -36,8 +36,10 @@ class Settings(BaseSettings):
     db_user: str = "dsfmp_user"
     db_password: str = "change_me_in_production"
     db_name: str = "dsfmp_test"
+    db_echo: bool = False
 
     # ── Redis ─────────────────────────────────────
+    redis_enabled: bool = False
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_db: int = 0
