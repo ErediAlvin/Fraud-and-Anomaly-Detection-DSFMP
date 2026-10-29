@@ -15,7 +15,7 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, getDesignatedRouteForRole } from '../context/AuthContext';
 
 /* ─── Floating shield particles (decorative) ─── */
 function FloatingParticles() {
@@ -80,20 +80,19 @@ function FeatureItem({
 /* ─── Main Login Component ─── */
 export function Login() {
   const navigate = useNavigate();
-  const { login, verify2FA, isAuthenticated } = useAuth();
+  const { login, verify2FA, isAuthenticated, user } = useAuth();
 
   /* Redirect if already authenticated */
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/dashboard', { replace: true });
+      navigate(getDesignatedRouteForRole(user?.role), { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, user, navigate]);
 
   /* State */
   const [step, setStep] = useState<'login' | '2fa'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('fraud_analyst');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
@@ -107,14 +106,14 @@ export function Login() {
     setIsLoading(true);
 
     try {
-      const result = await login({ email, password, role });
+      const result = await login({ email, password });
 
       if (result.requires2Fa) {
         setTempToken(result.tempToken || '');
         setStep('2fa');
       } else {
-        // No 2FA — go straight to dashboard
-        navigate('/dashboard', { replace: true });
+        // No 2FA — go straight to designated role page
+        navigate(getDesignatedRouteForRole(result.user?.role), { replace: true });
       }
     } catch (err: any) {
       setError(err.message || 'Login failed. Please check your credentials.');
@@ -131,8 +130,8 @@ export function Login() {
     const otpCode = otpDigits.join('');
 
     try {
-      await verify2FA(tempToken, otpCode);
-      navigate('/dashboard', { replace: true });
+      const authUser = await verify2FA(tempToken, otpCode);
+      navigate(getDesignatedRouteForRole(authUser?.role), { replace: true });
     } catch (err: any) {
       setError(err.message || 'Invalid verification code. Please try again.');
       setOtpDigits(['', '', '', '', '', '']);
@@ -358,38 +357,6 @@ export function Login() {
                       <Eye className="w-[18px] h-[18px]" />
                     )}
                   </button>
-                </div>
-              </div>
-
-              {/* Role */}
-              <div>
-                <label className="block text-xs font-semibold text-[#374151] mb-1.5 uppercase tracking-wide">
-                  Role
-                </label>
-                <div className="relative group">
-                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-[#9CA3AF] group-focus-within:text-[#1A3C5E] transition-colors" />
-                  <select
-                    id="login-role"
-                    value={role}
-                    onChange={(e) => setRole(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-xl text-sm text-[#374151] focus:outline-none focus:ring-2 focus:ring-[#1A3C5E]/20 focus:border-[#1A3C5E] transition-all appearance-none cursor-pointer"
-                  >
-                    <option value="fraud_analyst">Fraud Analyst</option>
-                    <option value="county_officer">County Officer</option>
-                    <option value="system_admin">System Administrator</option>
-                    <option value="supervisor">Supervisor / Senior Investigator</option>
-                    <option value="school_admin">School Administrator</option>
-                  </select>
-                  {/* Chevron */}
-                  <svg
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#9CA3AF] pointer-events-none"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
                 </div>
               </div>
 

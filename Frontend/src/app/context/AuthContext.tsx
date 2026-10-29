@@ -33,10 +33,27 @@ export interface AuthUser {
   twoFaEnabled: boolean;
 }
 
+export function getDesignatedRouteForRole(role?: string): string {
+  switch (role) {
+    case 'fraud_analyst':
+      return '/alerts';
+    case 'supervisor':
+      return '/cases';
+    case 'county_officer':
+      return '/beneficiaries';
+    case 'school_admin':
+      return '/procedures';
+    case 'system_admin':
+      return '/settings';
+    default:
+      return '/dashboard';
+  }
+}
+
 interface LoginPayload {
   email: string;
   password: string;
-  role: string;
+  role?: string;
 }
 
 interface LoginResult {
@@ -52,7 +69,7 @@ interface AuthContextValue {
   /** Step 1: email + password login. Returns whether 2FA is required. */
   login: (payload: LoginPayload) => Promise<LoginResult>;
   /** Step 2: verify the TOTP code with the temp token from step 1. */
-  verify2FA: (tempToken: string, otpCode: string) => Promise<void>;
+  verify2FA: (tempToken: string, otpCode: string) => Promise<AuthUser>;
   /** Log out — blacklist token on server, clear local storage. */
   logout: () => Promise<void>;
 }
@@ -91,11 +108,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── Login ──
   const login = useCallback(async (payload: LoginPayload): Promise<LoginResult> => {
-    const data = await api.post<any>('/auth/login', {
+    const body: Record<string, any> = {
       email: payload.email,
       password: payload.password,
-      role: payload.role,
-    });
+    };
+    if (payload.role) {
+      body.role = payload.role;
+    }
+    const data = await api.post<any>('/auth/login', body);
 
     // Backend uses snake_case, but also has serialization_alias for camelCase
     const requires2Fa = data.requires_2fa ?? data.requires2Fa ?? false;
@@ -119,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ── Verify 2FA ──
-  const verify2FA = useCallback(async (tempToken: string, otpCode: string) => {
+  const verify2FA = useCallback(async (tempToken: string, otpCode: string): Promise<AuthUser> => {
     const data = await api.post<any>('/auth/verify-2fa', {
       temp_token: tempToken,
       otp_code: otpCode,
@@ -133,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const authUser: AuthUser = data.user;
     setUser(authUser);
     localStorage.setItem('dsfmp_user', JSON.stringify(authUser));
+    return authUser;
   }, []);
 
   // ── Logout ──

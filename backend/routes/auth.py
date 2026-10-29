@@ -67,13 +67,6 @@ async def login(
             detail="Invalid email or password",
         )
 
-    # Verify role match
-    if user.role != request.role:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid role assigned to this user",
-        )
-
     # Check if account is active
     if not user.is_active:
         raise HTTPException(
