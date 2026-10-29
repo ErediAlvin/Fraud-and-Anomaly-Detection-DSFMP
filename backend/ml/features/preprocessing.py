@@ -48,11 +48,14 @@ class TransactionFeatureExtractor(BaseEstimator, TransformerMixin):
             df = X.copy()
 
         # Parse timestamp if string
-        if "transacted_at" in df.columns:
+        if "transacted_at" in df.columns and df["transacted_at"].notnull().any():
             if not pd.api.types.is_datetime64_any_dtype(df["transacted_at"]):
-                df["transacted_at"] = pd.to_datetime(df["transacted_at"])
-            df["hour_of_day"] = df["transacted_at"].dt.hour
-            df["day_of_week"] = df["transacted_at"].dt.dayofweek
+                df["transacted_at"] = pd.to_datetime(df["transacted_at"], errors="coerce")
+            df["hour_of_day"] = df["transacted_at"].dt.hour.fillna(12).astype(int)
+            if hasattr(df["transacted_at"].dt, "day_of_week"):
+                df["day_of_week"] = df["transacted_at"].dt.day_of_week.fillna(2).astype(int)
+            else:
+                df["day_of_week"] = df["transacted_at"].dt.dayofweek.fillna(2).astype(int)
         else:
             if "hour_of_day" not in df.columns:
                 df["hour_of_day"] = 12
@@ -68,29 +71,43 @@ class TransactionFeatureExtractor(BaseEstimator, TransformerMixin):
         if "log_amount" not in df.columns:
             df["log_amount"] = np.log1p(df["amount"].astype(float))
 
-        student_count = df.get("student_count", 500).fillna(500).astype(float)
-        student_count = np.where(student_count <= 0, 1.0, student_count)
-        
+        if "student_count" not in df.columns:
+            sc_series = pd.Series(500.0, index=df.index)
+        else:
+            sc_series = pd.to_numeric(df["student_count"], errors="coerce").fillna(500.0)
+        sc_series = np.where(sc_series <= 0, 1.0, sc_series)
+        df["student_count"] = sc_series
+
         if "amount_per_student" not in df.columns:
-            df["amount_per_student"] = df["amount"].astype(float) / student_count
+            df["amount_per_student"] = df["amount"].astype(float) / sc_series
         if "log_amount_per_student" not in df.columns:
             df["log_amount_per_student"] = np.log1p(df["amount_per_student"])
 
-        school_avg = df.get("school_avg_amount", df["amount"].astype(float)).fillna(df["amount"].astype(float))
+        if "school_avg_amount" not in df.columns:
+            school_avg = df["amount"].astype(float)
+        else:
+            school_avg = pd.to_numeric(df["school_avg_amount"], errors="coerce").fillna(df["amount"].astype(float))
+
         if "amount_to_school_avg_ratio" not in df.columns:
             df["amount_to_school_avg_ratio"] = df["amount"].astype(float) / (school_avg + 1.0)
 
         if "rolling_24h_count" not in df.columns:
             df["rolling_24h_count"] = 1
+        else:
+            df["rolling_24h_count"] = pd.to_numeric(df["rolling_24h_count"], errors="coerce").fillna(1).astype(int)
+
         if "log_rolling_24h_amount" not in df.columns:
-            rolling_amt = df.get("rolling_24h_amount", df["amount"]).fillna(df["amount"]).astype(float)
+            if "rolling_24h_amount" not in df.columns:
+                rolling_amt = df["amount"].astype(float)
+            else:
+                rolling_amt = pd.to_numeric(df["rolling_24h_amount"], errors="coerce").fillna(df["amount"].astype(float))
             df["log_rolling_24h_amount"] = np.log1p(rolling_amt)
 
         # Fill default types if missing
-        if "type" not in df.columns:
-            df["type"] = "SUPPLIER_PAYMENT"
-        if "payment_method" not in df.columns:
-            df["payment_method"] = "BANK_TRANSFER"
+        if "type" not in df.columns or df["type"].isnull().any():
+            df["type"] = df.get("type", pd.Series(["SUPPLIER_PAYMENT"] * len(df))).fillna("SUPPLIER_PAYMENT")
+        if "payment_method" not in df.columns or df["payment_method"].isnull().any():
+            df["payment_method"] = df.get("payment_method", pd.Series(["BANK_TRANSFER"] * len(df))).fillna("BANK_TRANSFER")
 
         return df
 

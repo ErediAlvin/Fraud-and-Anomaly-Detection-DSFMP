@@ -5,9 +5,13 @@ Single source of truth for all configuration. Reads from environment
 variables (or .env file) and validates at startup via Pydantic.
 """
 
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 from typing import List
+
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_FILE_PATH = os.path.join(BACKEND_DIR, ".env")
 
 
 class Settings(BaseSettings):
@@ -18,7 +22,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(ENV_FILE_PATH, ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -33,8 +37,8 @@ class Settings(BaseSettings):
     # ── MySQL ─────────────────────────────────────
     db_host: str = "localhost"
     db_port: int = 3306
-    db_user: str = "dsfmp_user"
-    db_password: str = "change_me_in_production"
+    db_user: str = "root"
+    db_password: str = ""
     db_name: str = "dsfmp_test"
     db_echo: bool = False
 
