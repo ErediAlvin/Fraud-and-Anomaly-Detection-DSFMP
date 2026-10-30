@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # ── JWT Authentication ────────────────────────
     jwt_secret_key: str = "CHANGE-THIS"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = 180  # 3 hours
     refresh_token_expire_days: int = 7
 
     # ── 2FA ───────────────────────────────────────

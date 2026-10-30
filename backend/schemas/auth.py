@@ -26,7 +26,7 @@ class UserResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-    role: str = "fraud_analyst"
+    role: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
