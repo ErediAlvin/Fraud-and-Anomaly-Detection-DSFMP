@@ -56,9 +56,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARN] Redis connection failed (non-critical): {e}")
 
-    # TODO Phase 2: Load ML models
-    # app.state.models = load_all_models()
-    # print("[OK] ML models loaded")
+    # Load ML models into application state
+    try:
+        from ml.models.scoring_engine import get_isolation_forest_model
+        app.state.isolation_forest = get_isolation_forest_model()
+        print("[OK] Isolation Forest ML model loaded successfully into memory")
+    except Exception as e:
+        print(f"[WARN] Isolation Forest model load skipped or failed: {e}")
 
     print(f"[OK] {settings.app_name} ready -- accepting requests")
 
@@ -174,8 +178,8 @@ app.include_router(risk_profiles_router, prefix="/api/risk-profiles", tags=["Ris
 from routes.reports import router as reports_router
 app.include_router(reports_router, prefix="/api/reports", tags=["Reports"])
 
-# from routes.model_performance import router as model_perf_router
-# app.include_router(model_perf_router, prefix="/api/models", tags=["Model Performance"])
+from routes.model_performance import router as model_perf_router
+app.include_router(model_perf_router, prefix="/api/models", tags=["Model Performance"])
 
 # from routes.procedures import router as procedures_router
 # app.include_router(procedures_router, prefix="/api/procedures", tags=["SOB/COB Procedures"])

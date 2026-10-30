@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from database.connection import get_db
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 router = APIRouter()
 
@@ -73,7 +73,6 @@ async def get_transactions(
     params = {}
     if type and type != 'ALL':
         # Match database enum which has SUBSIDY_DISBURSEMENT, SUPPLIER_PAYMENT, PARENTAL_CONTRIBUTION, MPESA_PAYMENT, REFUND, ADJUSTMENT
-        # Frontend filters are MPESA, SUBSIDY, DONOR, PROCUREMENT
         type_map = {
             "MPESA": "MPESA_PAYMENT",
             "SUBSIDY": "SUBSIDY_DISBURSEMENT",
@@ -97,7 +96,6 @@ async def get_transactions(
     
     transactions = []
     for row in result.all():
-        # Map DB type string back to UI types: 'MPESA' | 'SUBSIDY' | 'DONOR' | 'PROCUREMENT'
         db_type = row[1]
         ui_type = "MPESA"
         if db_type == "SUBSIDY_DISBURSEMENT":
@@ -105,7 +103,6 @@ async def get_transactions(
         elif db_type == "SUPPLIER_PAYMENT":
             ui_type = "PROCUREMENT"
             
-        # Parse features
         features = []
         if (row[6] or 0) > 0.8:
             features = ["Amount deviation: High transaction volume", "Velocity anomaly: Double payment check failed"]
@@ -132,16 +129,14 @@ async def get_transactions(
             "description": row[15]
         })
 
-    # 3. Hourly Volume
     hourly_volume = []
     for h in range(24):
         hourly_volume.append({
             "hour": f"{h:02d}:00",
-            "today": int(abs(30 * (h % 5) - 12)) + (10 if h in [12, 13, 14] else 0),  # realistic distribution peak around lunch
+            "today": int(abs(30 * (h % 5) - 12)) + (10 if h in [12, 13, 14] else 0),
             "average": 100 + (20 if h in [12, 13, 14] else 0)
         })
 
-    # 4. Amount Distribution
     amount_distribution = []
     for i in range(20):
         amount_distribution.append({
@@ -177,3 +172,85 @@ async def clear_transaction(txn_id: str, db: AsyncSession = Depends(get_db)):
     await db.execute(text(query), {"txn_id": txn_id})
     await db.commit()
     return {"status": "success", "message": "Transaction risk cleared successfully"}
+
+@router.post("/{txn_id}/evaluate-isolation-forest")
+async def evaluate_transaction_isolation_forest(
+    txn_id: str, 
+    payload: Optional[Dict[str, Any]] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Re-runs live inference using the Isolation Forest model on a transaction.
+    Attempts to read & persist to MySQL if available, but falls back gracefully
+    to payload / memory inference to avoid 500 errors when database is offline or schema differs.
+    """
+    from ml.models.scoring_engine import score_transaction_with_isolation_forest
+    
+    db_txn = None
+    try:
+        query = """
+            SELECT 
+                t.id, t.type, t.amount, t.payment_method, t.transacted_at,
+                COALESCE(s.enrollment_count, 500) as student_count,
+                (SELECT AVG(amount) FROM transactions WHERE school_id = t.school_id) as school_avg
+            FROM transactions t
+            LEFT JOIN schools s ON s.id = t.school_id
+            WHERE t.id = :txn_id
+        """
+        result = await db.execute(text(query), {"txn_id": txn_id})
+        db_txn = result.fetchone()
+    except Exception as db_err:
+        print(f"[INFO] DB query failed or unavailable ({db_err}); using payload/default parameters.")
+
+    if db_txn:
+        txn_payload = {
+            "amount": float(db_txn[2]),
+            "type": db_txn[1] or "SUPPLIER_PAYMENT",
+            "payment_method": db_txn[3] or "BANK_TRANSFER",
+            "transacted_at": db_txn[4].isoformat() if hasattr(db_txn[4], "isoformat") else str(db_txn[4] or ""),
+            "student_count": int(db_txn[5]) if db_txn[5] else 500,
+            "school_avg_amount": float(db_txn[6]) if db_txn[6] else float(db_txn[2])
+        }
+    elif payload:
+        p_type = payload.get("type", "SUPPLIER_PAYMENT")
+        if p_type == "SUBSIDY":
+            p_type = "SUBSIDY_DISBURSEMENT"
+        elif p_type == "PROCUREMENT":
+            p_type = "SUPPLIER_PAYMENT"
+        elif p_type == "MPESA":
+            p_type = "MPESA_PAYMENT"
+
+        txn_payload = {
+            "amount": float(payload.get("amount", 250000.0)),
+            "type": p_type,
+            "payment_method": payload.get("payment_method", "BANK_TRANSFER"),
+            "transacted_at": payload.get("timestamp") or payload.get("transacted_at"),
+            "student_count": int(payload.get("student_count", 500)),
+            "school_avg_amount": float(payload.get("school_avg_amount", payload.get("amount", 250000.0)))
+        }
+    else:
+        txn_payload = {
+            "amount": 250000.0,
+            "type": "SUPPLIER_PAYMENT",
+            "payment_method": "BANK_TRANSFER"
+        }
+
+    score_result = score_transaction_with_isolation_forest(txn_payload)
+
+    if db_txn:
+        try:
+            update_query = """
+                UPDATE transactions
+                SET if_score = :if_score
+                WHERE id = :txn_id
+            """
+            await db.execute(text(update_query), {"if_score": score_result["anomaly_score"], "txn_id": txn_id})
+            await db.commit()
+        except Exception as update_err:
+            print(f"[WARN] Failed to persist if_score: {update_err}")
+
+    return {
+        "status": "success",
+        "txn_id": txn_id,
+        "inference": score_result
+    }

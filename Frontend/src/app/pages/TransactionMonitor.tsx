@@ -45,6 +45,44 @@ export function TransactionMonitor() {
   const [search, setSearch] = useState('');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [actionLoading, setActionLoading] = useState(false);
+  const [liveIFMsg, setLiveIFMsg] = useState<{ score: number; tier: string; latency: number; reasons: string[] } | null>(null);
+
+  const handleTestLiveIF = async (txnId: string) => {
+    try {
+      setActionLoading(true);
+      setLiveIFMsg(null);
+      const res = await api.post<any>(`/transactions/${txnId}/evaluate-isolation-forest`, {
+        amount: selectedTx?.amount,
+        type: selectedTx?.type,
+        payer: selectedTx?.payer,
+        recipient: selectedTx?.recipient,
+        timestamp: selectedTx?.timestamp
+      });
+      if (res && res.inference) {
+        setLiveIFMsg({
+          score: res.inference.anomaly_score,
+          tier: res.inference.risk_tier,
+          latency: res.inference.latency_ms,
+          reasons: res.inference.reasons || []
+        });
+        // Update local transaction score
+        if (selectedTx) {
+          setSelectedTx({
+            ...selectedTx,
+            tier: res.inference.risk_tier,
+            modelScores: {
+              ...selectedTx.modelScores,
+              IF: res.inference.anomaly_score
+            }
+          });
+        }
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to execute Isolation Forest inference.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const handleInvestigate = async (txnId: string) => {
     try {
@@ -234,7 +272,10 @@ export function TransactionMonitor() {
                       className={`border-b border-[#DDE1E7] hover:bg-[#F4F6F9] cursor-pointer ${
                         index % 2 === 0 ? 'bg-white' : 'bg-[#FAFAFA]'
                       }`}
-                      onClick={() => setSelectedTx(tx)}
+                      onClick={() => {
+                        setSelectedTx(tx);
+                        setLiveIFMsg(null);
+                      }}
                     >
                       <td className="px-4 py-3 text-sm font-mono">{tx.id}</td>
                       <td className="px-4 py-3">
@@ -374,7 +415,37 @@ export function TransactionMonitor() {
 
               {/* Model scores */}
               <div>
-                <h3 className="font-bold text-sm mb-3">Model Breakdown</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold text-sm">Model Breakdown</h3>
+                  <button
+                    onClick={() => handleTestLiveIF(selectedTx.id)}
+                    disabled={actionLoading}
+                    className="text-xs bg-[#1A3C5E] hover:bg-[#2E7D52] text-white px-2.5 py-1 rounded font-medium transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {actionLoading ? 'Scoring...' : 'Test with Isolation Forest'}
+                  </button>
+                </div>
+
+                {liveIFMsg && (
+                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
+                    <div className="flex items-center justify-between font-bold text-[#1A3C5E] mb-1">
+                      <span>Live Model Inference (joblib):</span>
+                      <span className="font-mono">{liveIFMsg.latency} ms</span>
+                    </div>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="font-mono font-bold text-sm">Score: {liveIFMsg.score.toFixed(4)}</span>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#1A3C5E] text-white">
+                        {liveIFMsg.tier}
+                      </span>
+                    </div>
+                    {liveIFMsg.reasons.length > 0 && (
+                      <div className="text-[11px] text-[#78350F] bg-amber-50 p-1.5 rounded border border-amber-200">
+                        {liveIFMsg.reasons.join(' • ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   {Object.entries(selectedTx.modelScores).map(([model, score]) => (
                     <div key={model}>
