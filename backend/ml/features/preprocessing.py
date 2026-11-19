@@ -3,7 +3,7 @@ Feature Preprocessing Pipeline for Isolation Forest and Tabular Anomaly Detectio
 Transforms raw transaction dictionaries or DataFrames into scaled/encoded feature matrices.
 """
 
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -91,6 +91,30 @@ class TransactionFeatureExtractor(BaseEstimator, TransformerMixin):
         if "amount_to_school_avg_ratio" not in df.columns:
             df["amount_to_school_avg_ratio"] = df["amount"].astype(float) / (school_avg + 1.0)
 
+        # Deviation Z-score from school historical baseline
+        if "deviation_zscore" not in df.columns:
+            if "school_std_amount" in df.columns:
+                std_series = pd.to_numeric(df["school_std_amount"], errors="coerce").fillna(0.0)
+                df["deviation_zscore"] = np.where(
+                    std_series > 1e-4,
+                    (df["amount"].astype(float) - school_avg) / std_series,
+                    (df["amount"].astype(float) - school_avg) / (school_avg * 0.25 + 1.0),
+                )
+            else:
+                df["deviation_zscore"] = (df["amount"].astype(float) - school_avg) / (school_avg * 0.25 + 1.0)
+
+        # Per-student spending ratio compared to historical school per-student benchmark
+        if "per_student_spending_ratio" not in df.columns:
+            school_avg_per_student = school_avg / sc_series
+            df["per_student_spending_ratio"] = df["amount_per_student"] / (school_avg_per_student + 1e-4)
+
+        # Cyclical temporal features
+        hours = df["hour_of_day"].astype(float)
+        df["hour_sin"] = np.sin(2.0 * np.pi * hours / 24.0)
+        df["hour_cos"] = np.cos(2.0 * np.pi * hours / 24.0)
+        df["sin_hour"] = df["hour_sin"]
+        df["cos_hour"] = df["hour_cos"]
+
         if "rolling_24h_count" not in df.columns:
             df["rolling_24h_count"] = 1
         else:
@@ -174,6 +198,7 @@ class AutoencoderFeatureExtractor(BaseEstimator, TransformerMixin):
             rolling_amt = pd.to_numeric(df["rolling_24h_amount"], errors="coerce").fillna(amounts).clip(lower=0.0)
         else:
             rolling_amt = np.expm1(pd.to_numeric(df["log_rolling_24h_amount"], errors="coerce").fillna(np.log1p(amounts)))
+        rolling_amt = np.maximum(amounts, rolling_amt)
         df["amount_to_rolling_ratio"] = amounts / (rolling_amt + 1.0)
 
         # Round-number and structuring indicators (targets ROUND_NUMBER_DRAIN)
@@ -195,3 +220,39 @@ def build_autoencoder_preprocessor() -> ColumnTransformer:
         ],
         remainder="drop",
     )
+
+
+def extract_ingestion_features(
+    transaction_data: Union[Dict[str, Any], pd.DataFrame, List[Dict[str, Any]]],
+    school_context: Optional[Dict[str, Any]] = None
+) -> pd.DataFrame:
+    """
+    Convenience function for the real-time ingestion pipeline.
+    Combines raw transaction payload with school context (enrollment/student roll,
+    county, historical average/median, standard deviation, rolling activity) and extracts
+    cyclical temporal features (hour_sin, hour_cos), per-student spending ratios,
+    and deviation Z-scores.
+    """
+    if isinstance(transaction_data, list):
+        df = pd.DataFrame(transaction_data)
+    elif isinstance(transaction_data, dict):
+        df = pd.DataFrame([transaction_data])
+    else:
+        df = transaction_data.copy()
+
+    # Overlay school context if provided
+    if school_context:
+        if "student_count" in school_context and "student_count" not in df.columns:
+            df["student_count"] = school_context["student_count"]
+        if "school_avg_amount" in school_context and "school_avg_amount" not in df.columns:
+            df["school_avg_amount"] = school_context["school_avg_amount"]
+        if "school_std_amount" in school_context and "school_std_amount" not in df.columns:
+            df["school_std_amount"] = school_context["school_std_amount"]
+        if "rolling_24h_count" in school_context and "rolling_24h_count" not in df.columns:
+            df["rolling_24h_count"] = school_context["rolling_24h_count"]
+        if "rolling_24h_amount" in school_context and "rolling_24h_amount" not in df.columns:
+            df["rolling_24h_amount"] = school_context["rolling_24h_amount"]
+
+    extractor = AutoencoderFeatureExtractor()
+    return extractor.transform(df)
+

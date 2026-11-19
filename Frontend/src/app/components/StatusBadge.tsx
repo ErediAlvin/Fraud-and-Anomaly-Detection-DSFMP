@@ -19,10 +19,17 @@ export function StatusBadge({ status, variant = 'outline', className = '' }: Sta
     }
 
     const outline = {
-      CLEAN: 'border-[#2E7D52] text-[#2E7D52]',
-      WATCHLIST: 'border-[#E8A020] text-[#E8A020]',
-      SUSPENDED: 'border-[#C0392B] text-[#C0392B]',
-      PENDING: 'border-[#6B7280] text-[#6B7280]',
+      CLEAN: 'border-[#2E7D52] text-[#2E7D52] bg-emerald-50/40',
+      WATCHLIST: 'border-[#E8A020] text-[#E8A020] bg-amber-50/40',
+      SUSPENDED: 'border-[#C0392B] text-[#C0392B] bg-red-50/40',
+      PENDING: 'border-[#6B7280] text-[#6B7280] bg-gray-50/40',
+      NEW: 'border-[#2E7D52] text-[#2E7D52] bg-emerald-50/40',
+      UNDER_REVIEW: 'border-[#2471A3] text-[#2471A3] bg-blue-50/40',
+      ACKNOWLEDGED: 'border-[#2471A3] text-[#2471A3] bg-blue-50/40',
+      INVESTIGATING: 'border-[#B9770E] text-[#B9770E] bg-amber-50/40',
+      ESCALATED: 'border-[#D35400] text-[#D35400] bg-orange-50/40',
+      DISMISSED: 'border-[#6B7280] text-[#6B7280] bg-gray-50/40',
+      RESOLVED: 'border-[#2E7D52] text-[#2E7D52] bg-emerald-50/40',
     };
     return outline[upperStatus as keyof typeof outline] || 'border-[#6B7280] text-[#6B7280]';
   };

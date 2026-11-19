@@ -1,13 +1,314 @@
+import csv
+import io
 import json
 import uuid
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from datetime import datetime, timezone
+from typing import Optional, List, Dict, Any, Union
+import pandas as pd
+from fastapi import APIRouter, Depends, Query, HTTPException, status, BackgroundTasks, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+
 from database.connection import get_db
 from routes.settings import get_optional_user_id
-from typing import Optional, List, Dict, Any
+from schemas.transactions import (
+    TransactionIngestRequest,
+    TransactionIngestResponse,
+    BatchIngestResponse,
+)
+from services.ingestion_service import (
+    process_and_score_transaction,
+    process_and_score_batch,
+)
 
 router = APIRouter()
+
+
+def normalize_txn_type(t: Optional[str]) -> str:
+    """Normalize UI type aliases to database ENUM values."""
+    if not t:
+        return "SUPPLIER_PAYMENT"
+    upper = str(t).strip().upper()
+    type_map = {
+        "SUBSIDY": "SUBSIDY_DISBURSEMENT",
+        "PROCUREMENT": "SUPPLIER_PAYMENT",
+        "MPESA": "MPESA_PAYMENT",
+        "PARENTAL": "PARENTAL_CONTRIBUTION",
+    }
+    val = type_map.get(upper, upper)
+    valid_types = {
+        "SUBSIDY_DISBURSEMENT",
+        "SUPPLIER_PAYMENT",
+        "PARENTAL_CONTRIBUTION",
+        "MPESA_PAYMENT",
+        "REFUND",
+        "ADJUSTMENT",
+    }
+    return val if val in valid_types else "SUPPLIER_PAYMENT"
+
+
+def normalize_payment_method(m: Optional[str]) -> str:
+    """Normalize payment method to database ENUM values."""
+    if not m:
+        return "BANK_TRANSFER"
+    upper = str(m).strip().upper()
+    valid_methods = {"MPESA", "BANK_TRANSFER", "CHEQUE", "CASH", "SYSTEM"}
+    return upper if upper in valid_methods else "BANK_TRANSFER"
+
+
+@router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=TransactionIngestResponse)
+@router.post("/", status_code=status.HTTP_202_ACCEPTED, response_model=TransactionIngestResponse)
+async def ingest_transaction(
+    payload: TransactionIngestRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    POST /api/transactions (Single Transaction Ingestion):
+    Accept transaction payload (school_id, supplier_id, amount, type, payment_method, transacted_at, description).
+    Validate and insert into transactions with initial status PENDING and risk_tier = 'EVALUATING'.
+    Queue process_and_score_transaction as a background task.
+    Return HTTP 202 Accepted with { "transaction_id": str, "status": "QUEUED_FOR_SCORING" }.
+    """
+    txn_id = str(uuid.uuid4())
+
+    # Validate school exists
+    school_check = await db.execute(
+        text("SELECT id FROM schools WHERE id = :sid OR name = :sname LIMIT 1"),
+        {"sid": payload.school_id, "sname": payload.school_id}
+    )
+    school_row = school_check.fetchone()
+    if not school_row:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid school_id '{payload.school_id}'. School does not exist."
+        )
+    resolved_school_id = school_row[0]
+
+    # Validate supplier if provided
+    resolved_supplier_id = None
+    if payload.supplier_id:
+        supplier_check = await db.execute(
+            text("SELECT id FROM suppliers WHERE id = :sid LIMIT 1"),
+            {"sid": payload.supplier_id}
+        )
+        s_row = supplier_check.fetchone()
+        if s_row:
+            resolved_supplier_id = s_row[0]
+
+    norm_type = normalize_txn_type(payload.type)
+    norm_method = normalize_payment_method(payload.payment_method)
+
+    # Parse timestamp
+    transacted_dt = datetime.now(timezone.utc)
+    if payload.transacted_at:
+        try:
+            if isinstance(payload.transacted_at, datetime):
+                transacted_dt = payload.transacted_at
+            else:
+                transacted_dt = pd.to_datetime(payload.transacted_at, utc=True).to_pydatetime()
+        except Exception:
+            transacted_dt = datetime.now(timezone.utc)
+
+    ref_no = payload.reference_no or f"TXN-{uuid.uuid4().hex[:8].upper()}"
+
+    insert_query = text("""
+        INSERT INTO transactions (
+            id, school_id, supplier_id, type, amount, currency,
+            reference_no, description, payment_method, status,
+            risk_tier, transacted_at
+        ) VALUES (
+            :id, :school_id, :supplier_id, :type, :amount, :currency,
+            :reference_no, :description, :payment_method, 'PENDING',
+            'EVALUATING', :transacted_at
+        )
+    """)
+    await db.execute(insert_query, {
+        "id": txn_id,
+        "school_id": resolved_school_id,
+        "supplier_id": resolved_supplier_id,
+        "type": norm_type,
+        "amount": payload.amount,
+        "currency": payload.currency or "KES",
+        "reference_no": ref_no,
+        "description": payload.description or f"Automated ingestion for school {resolved_school_id}",
+        "payment_method": norm_method,
+        "transacted_at": transacted_dt,
+    })
+    await db.commit()
+
+    # Queue background scoring task
+    background_tasks.add_task(process_and_score_transaction, txn_id)
+
+    return {
+        "transaction_id": txn_id,
+        "status": "QUEUED_FOR_SCORING",
+        "risk_tier": "EVALUATING",
+        "message": "Transaction submitted and queued for background 3-model scoring."
+    }
+
+
+@router.post("/batch-ingest", status_code=status.HTTP_202_ACCEPTED, response_model=BatchIngestResponse)
+async def batch_ingest_transactions(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    POST /api/transactions/batch-ingest (Bulk Data Ingestion):
+    Accept a JSON array or multipart CSV containing up to 500 transaction records.
+    Bulk-insert records in a single database transaction.
+    Schedule asynchronous batch processing across the scoring models.
+    Return batch summary: { "total_submitted": int, "batch_id": str, "status": "PROCESSING" }.
+    """
+    content_type = request.headers.get("content-type", "")
+    records: List[Dict[str, Any]] = []
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        file_obj = None
+        for key in ("file", "csv", "data", "upload"):
+            if key in form and hasattr(form[key], "read"):
+                file_obj = form[key]
+                break
+        if file_obj is None:
+            for val in form.values():
+                if hasattr(val, "read"):
+                    file_obj = val
+                    break
+        if file_obj is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Multipart form must contain a CSV file under 'file'."
+            )
+        content_bytes = await file_obj.read()
+        try:
+            csv_text = content_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            csv_text = content_bytes.decode("latin-1")
+        reader = csv.DictReader(io.StringIO(csv_text))
+        for row in reader:
+            records.append(row)
+    else:
+        try:
+            body = await request.json()
+            if isinstance(body, list):
+                records = body
+            elif isinstance(body, dict):
+                records = body.get("transactions") or body.get("records") or [body]
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON request body: {str(e)}"
+            )
+
+    if not records:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Batch cannot be empty. Please provide at least 1 transaction record."
+        )
+
+    if len(records) > 500:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Batch size of {len(records)} exceeds maximum allowed size of 500 records."
+        )
+
+    # Fetch valid schools cache for quick lookup
+    schools_res = await db.execute(text("SELECT id, name FROM schools"))
+    valid_schools = {}
+    for sid, sname in schools_res.fetchall():
+        valid_schools[str(sid)] = str(sid)
+        valid_schools[str(sname).lower()] = str(sid)
+
+    default_school_id = next(iter(valid_schools.values())) if valid_schools else None
+
+    # Fetch valid suppliers cache
+    suppliers_res = await db.execute(text("SELECT id FROM suppliers"))
+    valid_suppliers = {str(r[0]) for r in suppliers_res.fetchall()}
+
+    batch_id = str(uuid.uuid4())
+    txn_ids: List[str] = []
+    insert_records: List[Dict[str, Any]] = []
+
+    for idx, rec in enumerate(records):
+        txn_id = str(uuid.uuid4())
+        txn_ids.append(txn_id)
+
+        raw_sid = str(rec.get("school_id") or "").strip()
+        school_id = valid_schools.get(raw_sid) or valid_schools.get(raw_sid.lower()) or default_school_id
+        if not school_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Record #{idx+1}: Invalid school_id '{raw_sid}' and no default school found."
+            )
+
+        raw_supp = str(rec.get("supplier_id") or "").strip()
+        supplier_id = raw_supp if raw_supp in valid_suppliers else None
+
+        try:
+            amount = float(rec.get("amount", 0.0))
+            if amount <= 0:
+                raise ValueError("Amount must be positive")
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Record #{idx+1}: Invalid amount '{rec.get('amount')}'."
+            )
+
+        txn_type = normalize_txn_type(rec.get("type"))
+        method = normalize_payment_method(rec.get("payment_method"))
+
+        raw_dt = rec.get("transacted_at") or rec.get("timestamp")
+        transacted_dt = datetime.now(timezone.utc)
+        if raw_dt:
+            try:
+                transacted_dt = pd.to_datetime(raw_dt, utc=True).to_pydatetime()
+            except Exception:
+                transacted_dt = datetime.now(timezone.utc)
+
+        ref_no = rec.get("reference_no") or f"BATCH-{batch_id[:6].upper()}-{idx+1:03d}"
+        desc = rec.get("description") or f"Disbursement batch ({batch_id[:8]})"
+
+        insert_records.append({
+            "id": txn_id,
+            "school_id": school_id,
+            "supplier_id": supplier_id,
+            "type": txn_type,
+            "amount": amount,
+            "currency": rec.get("currency", "KES") or "KES",
+            "reference_no": ref_no,
+            "description": desc,
+            "payment_method": method,
+            "batch_id": batch_id,
+            "transacted_at": transacted_dt,
+        })
+
+    # Bulk-insert in a single database transaction
+    bulk_insert_q = text("""
+        INSERT INTO transactions (
+            id, school_id, supplier_id, type, amount, currency,
+            reference_no, description, payment_method, status,
+            risk_tier, batch_id, transacted_at
+        ) VALUES (
+            :id, :school_id, :supplier_id, :type, :amount, :currency,
+            :reference_no, :description, :payment_method, 'PENDING',
+            'EVALUATING', :batch_id, :transacted_at
+        )
+    """)
+    await db.execute(bulk_insert_q, insert_records)
+    await db.commit()
+
+    # Schedule asynchronous batch processing across the scoring models
+    background_tasks.add_task(process_and_score_batch, txn_ids)
+
+    return {
+        "total_submitted": len(txn_ids),
+        "batch_id": batch_id,
+        "status": "PROCESSING",
+        "message": f"Successfully queued batch of {len(txn_ids)} transactions for background scoring."
+    }
+
 
 @router.get("")
 async def get_transactions(
@@ -151,6 +452,56 @@ async def get_transactions(
         "stats": stats,
         "hourly_volume": hourly_volume,
         "amount_distribution": amount_distribution
+    }
+
+
+@router.get("/context/schools")
+async def list_ingestion_schools(db: AsyncSession = Depends(get_db)):
+    """Retrieve list of schools for transaction ingestion selection."""
+    res = await db.execute(text("SELECT id, name, nemis_code, enrollment_count FROM schools ORDER BY name ASC"))
+    return [{"id": r[0], "name": r[1], "nemis": r[2], "enrollment": r[3]} for r in res.fetchall()]
+
+
+@router.get("/{txn_id}")
+async def get_single_transaction(txn_id: str, db: AsyncSession = Depends(get_db)):
+    """Retrieve current scoring and status for a specific transaction."""
+    query = """
+        SELECT 
+            t.id, t.type, t.amount, t.status, t.risk_tier, t.risk_score,
+            t.if_score, t.ae_score, t.lstm_score, t.gnn_score,
+            t.transacted_at, t.description, t.reference_no,
+            s.name as school_name,
+            CASE WHEN t.supplier_id IS NOT NULL THEN (SELECT name FROM suppliers WHERE id = t.supplier_id) ELSE 'N/A' END as supplier_name
+        FROM transactions t
+        LEFT JOIN schools s ON s.id = t.school_id
+        WHERE t.id = :tid
+        LIMIT 1
+    """
+    res = await db.execute(text(query), {"tid": txn_id})
+    row = res.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Transaction {txn_id} not found")
+
+    return {
+        "id": row[0],
+        "type": row[1],
+        "amount": float(row[2]),
+        "status": row[3],
+        "tier": row[4] or "LOW",
+        "risk_tier": row[4] or "LOW",
+        "mlScore": float(row[5]) if row[5] is not None else 0.0,
+        "risk_score": float(row[5]) if row[5] is not None else 0.0,
+        "modelScores": {
+            "IF": float(row[6]) if row[6] is not None else 0.0,
+            "AE": float(row[7]) if row[7] is not None else 0.0,
+            "LSTM": float(row[8]) if row[8] is not None else 0.0,
+            "GNN": float(row[9]) if row[9] is not None else 0.0,
+        },
+        "timestamp": row[10].strftime("%Y-%m-%d %H:%M:%S") if row[10] else "",
+        "description": row[11],
+        "reference_no": row[12],
+        "school_name": row[13],
+        "supplier_name": row[14],
     }
 
 @router.post("/{txn_id}/investigate")

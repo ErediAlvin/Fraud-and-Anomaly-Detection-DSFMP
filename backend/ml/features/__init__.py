@@ -4,6 +4,7 @@ from ml.features.preprocessing import (
     AutoencoderFeatureExtractor,
     build_preprocessor,
     build_autoencoder_preprocessor,
+    extract_ingestion_features,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "AutoencoderFeatureExtractor",
     "build_preprocessor",
     "build_autoencoder_preprocessor",
+    "extract_ingestion_features",
 ]

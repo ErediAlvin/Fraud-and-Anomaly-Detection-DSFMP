@@ -86,9 +86,14 @@ class TemporalSequenceBuilder(BaseEstimator, TransformerMixin):
         df = df.sort_values(by=["school_id", "transacted_at"]).reset_index(drop=True)
 
         # Amounts & counts
-        amount = pd.to_numeric(df.get("amount", 0.0), errors="coerce").fillna(0.0).astype(float)
-        student_count = pd.to_numeric(df.get("student_count", 500.0), errors="coerce").fillna(500.0).clip(lower=1.0)
-        school_avg = pd.to_numeric(df.get("school_avg_amount", amount), errors="coerce").fillna(amount)
+        amt_series = df["amount"] if "amount" in df.columns else pd.Series(0.0, index=df.index)
+        amount = pd.to_numeric(amt_series, errors="coerce").fillna(0.0).astype(float)
+        
+        sc_series = df["student_count"] if "student_count" in df.columns else pd.Series(500.0, index=df.index)
+        student_count = pd.to_numeric(sc_series, errors="coerce").fillna(500.0).clip(lower=1.0)
+        
+        avg_series = df["school_avg_amount"] if "school_avg_amount" in df.columns else amount
+        school_avg = pd.to_numeric(avg_series, errors="coerce").fillna(amount)
 
         df["log_amount"] = np.log1p(np.maximum(0.0, amount))
         df["amount_per_student"] = amount / student_count
@@ -96,8 +101,12 @@ class TemporalSequenceBuilder(BaseEstimator, TransformerMixin):
         df["amount_to_school_avg_ratio"] = amount / (school_avg + 1.0)
 
         # 24h rolling velocity
-        r24_cnt = pd.to_numeric(df.get("rolling_24h_count", 1), errors="coerce").fillna(1).astype(float)
-        r24_amt = pd.to_numeric(df.get("rolling_24h_amount", amount), errors="coerce").fillna(amount).astype(float)
+        r24_cnt_series = df["rolling_24h_count"] if "rolling_24h_count" in df.columns else pd.Series(1, index=df.index)
+        r24_cnt = pd.to_numeric(r24_cnt_series, errors="coerce").fillna(1).astype(float)
+        
+        r24_amt_series = df["rolling_24h_amount"] if "rolling_24h_amount" in df.columns else amount
+        r24_amt = pd.to_numeric(r24_amt_series, errors="coerce").fillna(amount).astype(float)
+        r24_amt = np.maximum(amount, r24_amt)
         df["rolling_24h_count"] = r24_cnt
         df["log_rolling_24h_amount"] = np.log1p(np.maximum(0.0, r24_amt))
         df["amount_to_rolling_ratio"] = amount / (r24_amt + 1.0)
