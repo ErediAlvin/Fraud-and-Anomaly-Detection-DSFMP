@@ -31,6 +31,42 @@ class InferenceResponse(BaseModel):
     latency_ms: float
     reasons: List[str]
     features_extracted: Dict[str, Any]
+    reconstruction_drivers: Optional[List[Dict[str, Any]]] = None
+
+
+class EnsembleInferenceRequest(InferenceRequest):
+    """Payload for combined multi-model weighted ensemble scoring."""
+    if_threshold: Optional[float] = Field(0.65, ge=0.0, le=1.0)
+    ae_threshold: Optional[float] = Field(0.70, ge=0.0, le=1.0)
+    lstm_threshold: Optional[float] = Field(0.68, ge=0.0, le=1.0)
+    weights: Optional[Dict[str, float]] = None
+
+
+class EnsembleBreakdownItem(BaseModel):
+    id: str
+    name: str
+    status: str
+    score: float
+    configured_weight: float
+    effective_weight: float
+    weighted_contribution: float
+    effective_contribution: float
+
+
+class EnsembleInferenceResponse(BaseModel):
+    """Weighted ensemble inference response combining active models."""
+    composite_score: float
+    raw_weighted_sum: float
+    risk_tier: str
+    is_anomaly: bool
+    total_latency_ms: float
+    weights: Dict[str, float]
+    breakdown: List[EnsembleBreakdownItem]
+    isolation_forest: InferenceResponse
+    autoencoder: InferenceResponse
+    lstm: Optional[InferenceResponse] = None
+    reasons: List[str]
+    features_extracted: Dict[str, Any]
 
 
 class ModelInfoResponse(BaseModel):

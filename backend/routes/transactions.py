@@ -1,8 +1,10 @@
-# pyrefly: ignore [missing-import]
-from fastapi import APIRouter, Depends, Query
+import json
+import uuid
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from database.connection import get_db
+from routes.settings import get_optional_user_id
 from typing import Optional, List, Dict, Any
 
 router = APIRouter()
@@ -152,15 +154,187 @@ async def get_transactions(
     }
 
 @router.post("/{txn_id}/investigate")
-async def investigate_transaction(txn_id: str, db: AsyncSession = Depends(get_db)):
-    query = """
+async def investigate_transaction(
+    txn_id: str, 
+    db: AsyncSession = Depends(get_db),
+    user_id: Optional[str] = Depends(get_optional_user_id),
+):
+    # 1. Update the transaction to FLAGGED & CRITICAL
+    update_query = """
         UPDATE transactions
         SET status = 'FLAGGED', risk_tier = 'CRITICAL', risk_score = 0.95
         WHERE id = :txn_id
     """
-    await db.execute(text(query), {"txn_id": txn_id})
+    await db.execute(text(update_query), {"txn_id": txn_id})
+
+    # 2. Fetch full transaction details to construct an alert & case
+    txn_query = """
+        SELECT 
+            t.id, t.type, t.amount, t.payment_method, t.reference_no, t.description,
+            t.school_id, s.county_id, s.name as school_name
+        FROM transactions t
+        LEFT JOIN schools s ON s.id = t.school_id
+        WHERE t.id = :txn_id
+        LIMIT 1
+    """
+    txn_res = await db.execute(text(txn_query), {"txn_id": txn_id})
+    txn_row = txn_res.fetchone()
+
+    if not txn_row:
+        await db.commit()
+        return {"status": "success", "message": "Transaction marked for investigation"}
+
+    t_id, t_type, t_amount, t_payment_method, t_ref, t_desc, school_id, county_id, school_name = txn_row
+    amount_val = float(t_amount) if t_amount else 0.0
+    school_display = school_name or "Unknown School"
+    ref_display = t_ref or t_id[:8]
+
+    # Resolve actor who initiated investigation
+    from routes.cases import _resolve_actor
+    actor_id, actor_name = await _resolve_actor(user_id, db)
+
+    # 3. Check if an alert already exists for this transaction, or create one
+    alert_check_q = text("""
+        SELECT id FROM fraud_alerts
+        WHERE entity_type = 'transaction' AND entity_id = :txn_id
+        ORDER BY created_at DESC LIMIT 1
+    """)
+    alert_check_res = await db.execute(alert_check_q, {"txn_id": txn_id})
+    existing_alert = alert_check_res.fetchone()
+
+    if existing_alert:
+        alert_uuid = existing_alert[0]
+        await db.execute(
+            text("UPDATE fraud_alerts SET status = 'ESCALATED', severity = 'CRITICAL' WHERE id = :aid"),
+            {"aid": alert_uuid}
+        )
+    else:
+        alert_uuid = str(uuid.uuid4())
+        alert_title = f"High Risk Payment Anomaly: {ref_display} ({school_display})"
+        alert_desc = t_desc or f"Irregular disbursement of KES {amount_val:,.2f} via {t_payment_method or 'SYSTEM'} flagged for immediate investigation."
+        insert_alert_q = text("""
+            INSERT INTO fraud_alerts (
+                id, alert_type, severity, title, description,
+                entity_type, entity_id, school_id, county_id,
+                composite_score, if_score, status
+            ) VALUES (
+                :id, 'PAYMENT_ANOMALY', 'CRITICAL', :title, :description,
+                'transaction', :entity_id, :school_id, :county_id,
+                0.9500, 0.9500, 'ESCALATED'
+            )
+        """)
+        await db.execute(insert_alert_q, {
+            "id": alert_uuid,
+            "title": alert_title,
+            "description": alert_desc,
+            "entity_id": txn_id,
+            "school_id": school_id,
+            "county_id": county_id,
+        })
+
+    # 4. Check if a case is already linked to this alert
+    case_linked_q = text("""
+        SELECT c.id, c.case_number 
+        FROM cases c
+        JOIN case_alerts ca ON ca.case_id = c.id
+        WHERE ca.alert_id = :aid
+        LIMIT 1
+    """)
+    case_linked_res = await db.execute(case_linked_q, {"aid": alert_uuid})
+    existing_case = case_linked_res.fetchone()
+
+    if existing_case:
+        case_uuid = existing_case[0]
+        case_number = existing_case[1]
+    else:
+        # Generate new sequential case number
+        count_q = text("""
+            SELECT COALESCE(MAX(CAST(SUBSTRING(case_number, 12) AS UNSIGNED)), 0)
+            FROM cases
+            WHERE case_number LIKE 'DSFMP-2026-%'
+        """)
+        count_res = await db.execute(count_q)
+        max_num = int(count_res.scalar() or 0)
+        next_num = max_num + 1
+        case_number = f"DSFMP-2026-{next_num:05d}"
+        case_uuid = str(uuid.uuid4())
+
+        case_title = f"Payment Fraud Investigation: {ref_display} - {school_display}"
+        case_desc = (
+            f"Automated case opened from Transaction Monitor investigation trigger.\n"
+            f"Transaction ID: {txn_id}\n"
+            f"Reference: {ref_display}\n"
+            f"Disbursement Type: {t_type}\n"
+            f"Amount: KES {amount_val:,.2f}\n"
+            f"Beneficiary/School: {school_display}\n"
+            f"Investigator Action: Flagged for critical review."
+        )
+
+        insert_case_query = text("""
+            INSERT INTO cases (
+                id, case_number, title, description, priority, status, category,
+                school_id, county_id, assigned_to, created_by, estimated_loss
+            ) VALUES (
+                :id, :case_number, :title, :description, 'CRITICAL', 'OPEN', 'PAYMENT_FRAUD',
+                :school_id, :county_id, :assigned_to, :created_by, :estimated_loss
+            )
+        """)
+        await db.execute(
+            insert_case_query,
+            {
+                "id": case_uuid,
+                "case_number": case_number,
+                "title": case_title,
+                "description": case_desc,
+                "school_id": school_id,
+                "county_id": county_id,
+                "assigned_to": actor_id,
+                "created_by": actor_id,
+                "estimated_loss": amount_val,
+            }
+        )
+
+        # Link case to alert
+        await db.execute(
+            text("INSERT INTO case_alerts (case_id, alert_id) VALUES (:case_id, :alert_id)"),
+            {"case_id": case_uuid, "alert_id": alert_uuid}
+        )
+
+        # Audit Log
+        try:
+            await db.execute(
+                text("""
+                    INSERT INTO audit_log (`user_id`, `action`, `entity_type`, `entity_id`, `details`)
+                    VALUES (:user_id, 'CASE_CREATE', 'cases', :id, :details)
+                """),
+                {
+                    "user_id": actor_id,
+                    "id": case_uuid,
+                    "details": json.dumps({
+                        "case_number": case_number,
+                        "title": case_title,
+                        "priority": "CRITICAL",
+                        "category": "PAYMENT_FRAUD",
+                        "alert_id": alert_uuid,
+                        "transaction_id": txn_id,
+                        "created_by": actor_name,
+                    }),
+                },
+            )
+        except Exception as e:
+            print(f"[WARN] Failed to write audit log for transaction case creation: {e}")
+
     await db.commit()
-    return {"status": "success", "message": "Transaction marked for investigation"}
+
+    return {
+        "status": "success",
+        "message": f"Transaction escalated to Case Management ({case_number})",
+        "case": {
+            "id": case_number,
+            "db_id": case_uuid,
+            "case_number": case_number,
+        }
+    }
 
 @router.post("/{txn_id}/clear")
 async def clear_transaction(txn_id: str, db: AsyncSession = Depends(get_db)):
@@ -192,7 +366,8 @@ async def evaluate_transaction_isolation_forest(
             SELECT 
                 t.id, t.type, t.amount, t.payment_method, t.transacted_at,
                 COALESCE(s.enrollment_count, 500) as student_count,
-                (SELECT AVG(amount) FROM transactions WHERE school_id = t.school_id) as school_avg
+                (SELECT AVG(amount) FROM transactions WHERE school_id = t.school_id) as school_avg,
+                t.lstm_score, t.gnn_score
             FROM transactions t
             LEFT JOIN schools s ON s.id = t.school_id
             WHERE t.id = :txn_id
@@ -237,20 +412,86 @@ async def evaluate_transaction_isolation_forest(
 
     score_result = score_transaction_with_isolation_forest(txn_payload)
 
+    # Also score with Autoencoder & LSTM & compute weighted ensemble when artifacts are available
+    ae_result = None
+    lstm_result = None
+    ensemble_result = None
+    try:
+        from ml.models.scoring_engine import (
+            score_transaction_with_autoencoder,
+            score_transaction_with_lstm,
+            compute_weighted_ensemble_score,
+            DEFAULT_LSTM_MODEL_PATH,
+        )
+        ae_result = score_transaction_with_autoencoder(txn_payload)
+        if os.path.exists(DEFAULT_LSTM_MODEL_PATH):
+            try:
+                lstm_result = score_transaction_with_lstm(txn_payload)
+            except Exception as l_err:
+                print(f"[WARN] LSTM evaluation failed: {l_err}")
+
+        active_lstm_score = (
+            lstm_result["anomaly_score"]
+            if lstm_result is not None
+            else (float(db_txn[7]) if db_txn and len(db_txn) > 7 and db_txn[7] is not None else None)
+        )
+        ensemble_result = compute_weighted_ensemble_score(
+            if_score=score_result["anomaly_score"],
+            ae_score=ae_result["anomaly_score"],
+            lstm_score=active_lstm_score,
+            gnn_score=float(db_txn[8]) if db_txn and len(db_txn) > 8 and db_txn[8] is not None else None,
+        )
+    except Exception as ae_err:
+        print(f"[WARN] Multi-model evaluation skipped: {ae_err}")
+
     if db_txn:
         try:
-            update_query = """
-                UPDATE transactions
-                SET if_score = :if_score
-                WHERE id = :txn_id
-            """
-            await db.execute(text(update_query), {"if_score": score_result["anomaly_score"], "txn_id": txn_id})
+            if ae_result is not None and ensemble_result is not None:
+                if lstm_result is not None:
+                    update_query = """
+                        UPDATE transactions
+                        SET if_score = :if_score, ae_score = :ae_score, lstm_score = :lstm_score,
+                            risk_score = :risk_score, risk_tier = :risk_tier
+                        WHERE id = :txn_id
+                    """
+                    params = {
+                        "if_score": score_result["anomaly_score"],
+                        "ae_score": ae_result["anomaly_score"],
+                        "lstm_score": lstm_result["anomaly_score"],
+                        "risk_score": ensemble_result["composite_score"],
+                        "risk_tier": ensemble_result["risk_tier"],
+                        "txn_id": txn_id,
+                    }
+                else:
+                    update_query = """
+                        UPDATE transactions
+                        SET if_score = :if_score, ae_score = :ae_score, risk_score = :risk_score, risk_tier = :risk_tier
+                        WHERE id = :txn_id
+                    """
+                    params = {
+                        "if_score": score_result["anomaly_score"],
+                        "ae_score": ae_result["anomaly_score"],
+                        "risk_score": ensemble_result["composite_score"],
+                        "risk_tier": ensemble_result["risk_tier"],
+                        "txn_id": txn_id,
+                    }
+                await db.execute(text(update_query), params)
+            else:
+                update_query = """
+                    UPDATE transactions
+                    SET if_score = :if_score
+                    WHERE id = :txn_id
+                """
+                await db.execute(text(update_query), {"if_score": score_result["anomaly_score"], "txn_id": txn_id})
             await db.commit()
         except Exception as update_err:
-            print(f"[WARN] Failed to persist if_score: {update_err}")
+            print(f"[WARN] Failed to persist model scores: {update_err}")
 
     return {
         "status": "success",
         "txn_id": txn_id,
-        "inference": score_result
+        "inference": score_result,
+        "ae_inference": ae_result,
+        "lstm_inference": lstm_result,
+        "ensemble": ensemble_result,
     }

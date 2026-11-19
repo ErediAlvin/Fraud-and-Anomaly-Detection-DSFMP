@@ -75,9 +75,13 @@ export function SystemSettings() {
 
   const [thresholds, setThresholds] = useState({
     model_threshold_if: 0.65,
-    model_threshold_ae: 0.67,
+    model_threshold_ae: 0.70,
     model_threshold_lstm: 0.69,
     model_threshold_gnn: 0.71,
+    weight_if: 0.40,
+    weight_ae: 0.30,
+    weight_lstm: 0.30,
+    weight_gnn: 0.00,
     threshold_critical: 0.80,
     threshold_high: 0.60,
     threshold_medium: 0.40,
@@ -447,6 +451,7 @@ export function SystemSettings() {
                   <table className="w-full">
                     <thead className="bg-[#F4F6F9] border-b border-[#DDE1E7]">
                       <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase w-12">#</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">Name</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">Email</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">Role</th>
@@ -458,7 +463,7 @@ export function SystemSettings() {
                     <tbody>
                       {users.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="text-center py-6 text-sm text-[#6B7280]">
+                          <td colSpan={7} className="text-center py-6 text-sm text-[#6B7280]">
                             No user accounts found.
                           </td>
                         </tr>
@@ -470,6 +475,7 @@ export function SystemSettings() {
                               index % 2 === 0 ? 'bg-white' : 'bg-[#FAFAFA]'
                             }`}
                           >
+                            <td className="px-4 py-3 text-xs font-mono text-[#6B7280] font-medium">{index + 1}</td>
                             <td className="px-4 py-3 text-sm font-medium text-[#1F2937]">{user.name}</td>
                             <td className="px-4 py-3 text-sm text-[#4B5563]">{user.email}</td>
                             <td className="px-4 py-3 text-sm">
@@ -610,6 +616,132 @@ export function SystemSettings() {
                   </div>
 
                   <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <h3 className="font-bold text-sm text-[#374151]">Ensemble Model Scoring Weights</h3>
+                        <p className="text-xs text-[#6B7280]">
+                          Controls how each model contributes to the composite fraud risk score (recommended sum: 100%).
+                        </p>
+                      </div>
+                      {(() => {
+                        const weightSum =
+                          (thresholds.weight_if || 0) +
+                          (thresholds.weight_ae || 0) +
+                          (thresholds.weight_lstm || 0);
+                        const isBalanced = Math.abs(weightSum - 1.0) < 0.01;
+                        return (
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-xs font-mono font-bold px-2.5 py-1 rounded ${
+                                isBalanced
+                                  ? 'bg-[#E8F8F0] text-[#2E7D52]'
+                                  : 'bg-[#FEF9E7] text-[#B9770E]'
+                              }`}
+                            >
+                              Total: {(weightSum * 100).toFixed(0)}%
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setThresholds({
+                                  ...thresholds,
+                                  weight_if: 0.40,
+                                  weight_ae: 0.30,
+                                  weight_lstm: 0.30,
+                                  weight_gnn: 0.00,
+                                })
+                              }
+                              className="text-xs text-[#1A3C5E] hover:underline font-medium cursor-pointer"
+                            >
+                              Reset Defaults
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-[#F9FAFB] p-4 rounded-lg border border-[#E5E7EB]">
+                      {[
+                        { 
+                          key: 'weight_if' as const, 
+                          label: 'Isolation Forest Weight', 
+                          badge: 'ACTIVE',
+                          desc: 'Out-of-distribution tabular anomaly detection' 
+                        },
+                        { 
+                          key: 'weight_ae' as const, 
+                          label: 'Autoencoder (MLP) Weight', 
+                          badge: 'ACTIVE',
+                          desc: 'Reconstruction error on structured patterns' 
+                        },
+                        { 
+                          key: 'weight_lstm' as const, 
+                          label: 'LSTM Temporal Weight', 
+                          badge: 'ACTIVE',
+                          desc: 'Sequence drift across disbursement windows' 
+                        },
+                      ].map((item) => {
+                        const activeSum = thresholds.weight_if + thresholds.weight_ae + thresholds.weight_lstm || 1;
+                        const effectiveShare = item.badge === 'ACTIVE' 
+                          ? ((thresholds[item.key] / activeSum) * 100).toFixed(1) 
+                          : '0.0';
+                        return (
+                          <div key={item.key} className="bg-white p-3 rounded border border-[#E5E7EB]">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-semibold text-[#1C1C1E]">{item.label}</span>
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                    item.badge === 'ACTIVE'
+                                      ? 'bg-green-100 text-green-800'
+                                      : 'bg-gray-200 text-gray-600'
+                                  }`}
+                                >
+                                  {item.badge}
+                                </span>
+                              </div>
+                              <span className="text-xs font-mono font-bold text-[#1A3C5E]">
+                                {(thresholds[item.key] * 100).toFixed(0)}% ({thresholds[item.key].toFixed(2)})
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-[#6B7280] mb-2">{item.desc}</p>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.05"
+                              value={thresholds[item.key]}
+                              onChange={(e) =>
+                                setThresholds({ ...thresholds, [item.key]: parseFloat(e.target.value) })
+                              }
+                              className="w-full accent-[#1A3C5E]"
+                            />
+                            <div className="flex items-center justify-between mt-1 text-[10px] text-[#6B7280] font-mono">
+                              <span>Configured: {thresholds[item.key].toFixed(2)}</span>
+                              <span>Active Share: {effectiveShare}%</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    
+                    {/* Active Ensemble Formula Banner */}
+                    <div className="mt-3 p-3 rounded-lg bg-[#F0F7FF] border border-[#BFDBFE] text-xs">
+                      <div className="font-semibold text-[#1A3C5E] mb-1 flex items-center justify-between">
+                        <span>Current 3-Model Active Ensemble Formula</span>
+                        <span className="text-[11px] font-mono bg-white px-2 py-0.5 rounded border border-[#BFDBFE]">
+                          Active Total: {((thresholds.weight_if + thresholds.weight_ae + thresholds.weight_lstm) * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <p className="font-mono text-[11px] text-[#1E3A8A]">
+                        Composite Score = [({thresholds.weight_if.toFixed(2)} &times; IF) + ({thresholds.weight_ae.toFixed(2)} &times; AE) + ({thresholds.weight_lstm.toFixed(2)} &times; LSTM)] &divide; {(thresholds.weight_if + thresholds.weight_ae + thresholds.weight_lstm).toFixed(2)}
+                      </p>
+                      <p className="text-[10px] text-[#475569] mt-1">
+                        Effective active weights: Isolation Forest ({((thresholds.weight_if / (thresholds.weight_if + thresholds.weight_ae + thresholds.weight_lstm)) * 100).toFixed(1)}%) + Autoencoder ({((thresholds.weight_ae / (thresholds.weight_if + thresholds.weight_ae + thresholds.weight_lstm)) * 100).toFixed(1)}%) + LSTM Autoencoder ({((thresholds.weight_lstm / (thresholds.weight_if + thresholds.weight_ae + thresholds.weight_lstm)) * 100).toFixed(1)}%).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
                     <h3 className="font-bold text-sm mb-4 text-[#374151]">Composite Score Tier Boundaries</h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="bg-[#FDF2F2] p-3 rounded-lg border border-[#F5C6CB]">
@@ -680,7 +812,7 @@ export function SystemSettings() {
                     className="bg-[#1A3C5E] text-white px-6 py-2.5 rounded-lg font-medium hover:bg-[#2E7D52] transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
                   >
                     {savingCategory === 'thresholds' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    Save Thresholds
+                    Save Thresholds &amp; Weights
                   </button>
                 </div>
               </div>

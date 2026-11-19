@@ -157,6 +157,82 @@ class TestIsolationForestIntegration(unittest.TestCase):
         self.assertIn("features_extracted", data)
         self.assertEqual(data["features_extracted"]["amount"], 15000.0)
 
+    def test_10_overview_includes_active_autoencoder_and_weights(self):
+        """Verify /overview exposes trained Autoencoder and ensemble weights."""
+        response = self.client.get("/api/models/overview")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("weights", data)
+        self.assertAlmostEqual(data["weights"]["autoencoder"], 0.30, places=2)
+        ae = next(m for m in data["models"] if m["id"] == "autoencoder")
+        self.assertEqual(ae["status"], "HEALTHY")
+        self.assertTrue(ae["is_active"])
+        self.assertAlmostEqual(ae["weight"], 0.30, places=2)
+        self.assertAlmostEqual(ae["roc_auc"], 1.0, places=4)
+
+    def test_11_autoencoder_info_and_inference(self):
+        """Verify /autoencoder/info and /autoencoder/infer detect anomalous drain."""
+        info_res = self.client.get("/api/models/autoencoder/info")
+        self.assertEqual(info_res.status_code, 200)
+        info = info_res.json()
+        self.assertEqual(info["id"], "autoencoder_v1")
+        self.assertEqual(info["architecture"], [24, 10, 4, 10, 24])
+
+        payload = {
+            "amount": 1000000.0,
+            "type": "SUPPLIER_PAYMENT",
+            "payment_method": "CASH",
+            "transacted_at": "2026-10-29T02:15:00",
+            "student_count": 200,
+            "school_avg_amount": 120000.0,
+            "rolling_24h_count": 4,
+            "threshold": 0.70,
+        }
+        infer_res = self.client.post("/api/models/autoencoder/infer", json=payload)
+        self.assertEqual(infer_res.status_code, 200)
+        data = infer_res.json()
+        self.assertEqual(data["model_name"], "Autoencoder")
+        self.assertGreaterEqual(data["anomaly_score"], 0.70)
+        self.assertTrue(data["is_anomaly"])
+        self.assertTrue(data["reconstruction_drivers"])
+
+    def test_12_ensemble_inference_with_weights(self):
+        """Verify /ensemble/infer computes weighted breakdown and composite score across 3 models."""
+        payload = {
+            "amount": 1500000.0,
+            "type": "SUPPLIER_PAYMENT",
+            "payment_method": "CASH",
+            "transacted_at": "2026-10-29T03:00:00",
+            "student_count": 50,
+            "school_avg_amount": 100000.0,
+            "rolling_24h_count": 3,
+            "weights": {"weight_if": 0.40, "weight_ae": 0.60, "weight_lstm": 0.0},
+        }
+        res = self.client.post("/api/models/ensemble/infer", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("composite_score", data)
+        self.assertIn("breakdown", data)
+        model_ids = [item["id"] for item in data["breakdown"]]
+        self.assertNotIn("gnn", model_ids)
+        self.assertIn("if", model_ids)
+        self.assertIn("ae", model_ids)
+        expected_composite = round(
+            0.40 * data["isolation_forest"]["anomaly_score"] + 0.60 * data["autoencoder"]["anomaly_score"],
+            4,
+        )
+        self.assertAlmostEqual(data["composite_score"], expected_composite, places=3)
+
+    def test_13_settings_schema_includes_scoring_weights(self):
+        """Verify RiskThresholdSettings exposes the 3 ensemble weights (40% IF, 30% AE, 30% LSTM) summing to 1.0."""
+        from schemas.settings import RiskThresholdSettings
+        cfg = RiskThresholdSettings()
+        total = cfg.weight_if + cfg.weight_ae + cfg.weight_lstm
+        self.assertAlmostEqual(total, 1.0, places=4)
+        self.assertAlmostEqual(cfg.weight_if, 0.40, places=2)
+        self.assertAlmostEqual(cfg.weight_ae, 0.30, places=2)
+        self.assertAlmostEqual(cfg.weight_lstm, 0.30, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()

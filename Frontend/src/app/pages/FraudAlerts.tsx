@@ -176,8 +176,8 @@ export function FraudAlerts() {
             <table className="w-full">
               <thead className="bg-[#F4F6F9] border-b border-[#DDE1E7]">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
-                    Alert ID
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wide w-12">
+                    #
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
                     Risk Tier
@@ -230,7 +230,7 @@ export function FraudAlerts() {
                       } ${index % 2 === 0 ? 'bg-white' : 'bg-[#FAFAFA]'}`}
                       onClick={() => setSelectedAlert(alert)}
                     >
-                      <td className="px-4 py-3 text-sm font-mono">{alert.id}</td>
+                      <td className="px-4 py-3 text-xs font-mono text-[#6B7280] font-medium">{index + 1}</td>
                       <td className="px-4 py-3">
                         <RiskBadge tier={alert.tier} />
                       </td>
@@ -277,7 +277,7 @@ export function FraudAlerts() {
             <div className="sticky top-0 bg-white border-b border-[#DDE1E7] p-6 flex items-center justify-between">
               <div>
                 <h2 className="font-bold text-xl">Alert Details</h2>
-                <p className="text-sm font-mono text-[#6B7280]">{selectedAlert.id}</p>
+                <p className="text-sm font-medium text-[#6B7280]">{selectedAlert.alertType}</p>
               </div>
               <button
                 onClick={() => setSelectedAlert(null)}

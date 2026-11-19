@@ -59,10 +59,10 @@ class Settings(BaseSettings):
     totp_issuer: str = "DSFMP Fraud Detection"
 
     # ── Risk Scoring Weights ──────────────────────
-    weight_isolation_forest: float = 0.25
+    weight_isolation_forest: float = 0.40
     weight_autoencoder: float = 0.30
-    weight_lstm: float = 0.25
-    weight_gnn: float = 0.20
+    weight_lstm: float = 0.30
+    weight_gnn: float = 0.00
 
     # ── Risk Tier Thresholds ──────────────────────
     threshold_critical: float = 0.80

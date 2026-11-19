@@ -239,7 +239,7 @@ export function RiskProfiles() {
             <table className="w-full">
               <thead className="bg-[#F4F6F9] border-b border-[#DDE1E7]">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">Profile ID</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase w-12">#</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">Entity Name</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">Type</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">County</th>
@@ -278,7 +278,7 @@ export function RiskProfiles() {
                       }`}
                       onClick={() => handleOpenDetail(profile.id)}
                     >
-                      <td className="px-4 py-3 text-xs font-mono text-[#6B7280]">{profile.id}</td>
+                      <td className="px-4 py-3 text-xs font-mono text-[#6B7280] font-medium">{index + 1}</td>
                       <td className="px-4 py-3 text-sm font-semibold text-[#1F2937]">{profile.name}</td>
                       <td className="px-4 py-3 text-xs font-medium text-[#4B5563]">
                         <span className="bg-[#EBF5FB] text-[#1A3C5E] px-2 py-0.5 rounded font-mono">
@@ -379,153 +379,161 @@ export function RiskProfiles() {
       </main>
 
       {/* ── Individual Entity Dossier Modal ── */}
-      {selectedProfileId && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl border border-[#DDE1E7] animate-in fade-in zoom-in duration-150">
-            <div className="sticky top-0 bg-white border-b border-[#DDE1E7] px-6 py-4 flex items-center justify-between z-10">
-              <div>
-                <h2 className="font-bold text-lg text-[#1A3C5E]">Entity Risk Dossier & Behavioral Breakdown</h2>
-                <p className="text-xs font-mono text-[#6B7280]">Profile: {selectedProfileId}</p>
+      {selectedProfileId && (() => {
+        const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
+        const entityName = detailData?.profile?.name || selectedProfile?.name || 'Loading Entity...';
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl border border-[#DDE1E7] animate-in fade-in zoom-in duration-150">
+              <div className="sticky top-0 bg-white border-b border-[#DDE1E7] px-6 py-4 flex items-center justify-between z-10">
+                <div>
+                  <h2 className="font-bold text-lg text-[#1A3C5E]">Entity Risk Dossier &amp; Behavioral Breakdown</h2>
+                  <p className="text-xs font-medium text-[#6B7280]">Target Subject: {entityName}</p>
+                </div>
+                <button
+                  onClick={() => setSelectedProfileId(null)}
+                  className="p-1.5 hover:bg-[#F4F6F9] rounded-lg text-[#6B7280]"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <button
-                onClick={() => setSelectedProfileId(null)}
-                className="p-1.5 hover:bg-[#F4F6F9] rounded-lg text-[#6B7280]"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            <div className="p-6 space-y-6">
-              {actionSuccess && (
-                <div className="p-3 bg-[#E8F8F0] border border-[#2E7D52] text-[#2E7D52] rounded-lg text-xs font-medium flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4" />
-                  <span>{actionSuccess}</span>
-                </div>
-              )}
-
-              {detailLoading ? (
-                <div className="text-center py-12 text-sm text-[#6B7280]">
-                  <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-[#1A3C5E]" />
-                  Loading entity dossier...
-                </div>
-              ) : detailData && detailData.profile ? (
-                <>
-                  {/* Entity Metadata Card */}
-                  <div className="bg-[#F8FAFC] rounded-lg p-4 border border-[#E2E8F0]">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                      <div>
-                        <span className="text-[#6B7280] block mb-0.5">Entity Name:</span>
-                        <p className="font-bold text-sm text-[#1F2937]">{detailData.profile.name}</p>
-                      </div>
-                      <div>
-                        <span className="text-[#6B7280] block mb-0.5">Type & County:</span>
-                        <p className="font-medium text-[#1F2937]">
-                          {detailData.profile.entityType} • {detailData.profile.county}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-[#6B7280] block mb-0.5">Composite Score:</span>
-                        <p className="font-mono font-bold text-sm text-[#C0392B]">
-                          {detailData.profile.riskScore.toFixed(2)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-[#6B7280] block mb-0.5">Current Status:</span>
-                        <StatusBadge status={detailData.profile.status} />
-                      </div>
-                    </div>
+              <div className="p-6 space-y-6">
+                {actionSuccess && (
+                  <div className="p-3 bg-[#E8F8F0] border border-[#2E7D52] text-[#2E7D52] rounded-lg text-xs font-medium flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" />
+                    <span>{actionSuccess}</span>
                   </div>
+                )}
 
-                  {/* 4-Model Breakdown & Trend */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="border border-[#E5E7EB] rounded-lg p-4">
-                      <h4 className="font-bold text-xs uppercase text-[#6B7280] mb-2 flex items-center gap-1.5">
-                        <Sliders className="w-3.5 h-3.5 text-[#1A3C5E]" />
-                        4-Model Score Breakdown
-                      </h4>
-                      <div className="space-y-2.5">
-                        {detailData.radar?.map((m: any, idx: number) => (
-                          <div key={idx}>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="font-medium text-[#374151]">{m.metric}</span>
-                              <span className="font-mono font-bold text-[#1A3C5E]">{m.value.toFixed(2)}</span>
-                            </div>
-                            <div className="w-full bg-[#E5E7EB] rounded-full h-1.5">
-                              <div
-                                className="bg-[#1A3C5E] h-1.5 rounded-full"
-                                style={{ width: `${m.value * 100}%` }}
-                              />
-                            </div>
-                          </div>
-                        ))}
+                {detailLoading ? (
+                  <div className="text-center py-12 text-sm text-[#6B7280]">
+                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-[#1A3C5E]" />
+                    Loading entity dossier...
+                  </div>
+                ) : detailData && detailData.profile ? (
+                  <>
+                    {/* Entity Metadata Card */}
+                    <div className="bg-[#F8FAFC] rounded-lg p-4 border border-[#E2E8F0]">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                        <div>
+                          <span className="text-[#6B7280] block mb-0.5">Entity Name:</span>
+                          <p className="font-bold text-sm text-[#1F2937]">{detailData.profile.name}</p>
+                        </div>
+                        <div>
+                          <span className="text-[#6B7280] block mb-0.5">Type &amp; County:</span>
+                          <p className="font-medium text-[#1F2937]">
+                            {detailData.profile.entityType} &bull; {detailData.profile.county}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-[#6B7280] block mb-0.5">Composite Score:</span>
+                          <p className="font-mono font-bold text-sm text-[#C0392B]">
+                            {typeof detailData.profile.riskScore === 'number'
+                              ? detailData.profile.riskScore.toFixed(2)
+                              : detailData.profile.riskScore || '0.00'}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-[#6B7280] block mb-0.5">Current Status:</span>
+                          <StatusBadge status={detailData.profile.status} />
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-lg p-4">
-                      <h4 className="font-bold text-xs uppercase text-[#6B7280] mb-2 flex items-center gap-1.5">
-                        <Activity className="w-3.5 h-3.5 text-[#1A3C5E]" />
-                        Associated Alert History ({detailData.alerts?.length || 0})
-                      </h4>
-                      <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-                        {detailData.alerts?.length === 0 ? (
-                          <p className="text-xs text-[#6B7280] py-4 text-center">No alerts recorded for this entity.</p>
-                        ) : (
-                          detailData.alerts.map((al: any) => (
-                            <div key={al.id} className="p-2 rounded border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
-                              <div className="flex items-center justify-between mb-0.5">
-                                <span className="font-semibold text-[#1F2937]">{al.title}</span>
-                                <RiskBadge tier={al.severity} />
+                    {/* 4-Model Breakdown & Trend */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="border border-[#E5E7EB] rounded-lg p-4">
+                        <h4 className="font-bold text-xs uppercase text-[#6B7280] mb-2 flex items-center gap-1.5">
+                          <Sliders className="w-3.5 h-3.5 text-[#1A3C5E]" />
+                          4-Model Score Breakdown
+                        </h4>
+                        <div className="space-y-2.5">
+                          {detailData.radar?.map((m: any, idx: number) => (
+                            <div key={idx}>
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="font-medium text-[#374151]">{m.metric}</span>
+                                <span className="font-mono font-bold text-[#1A3C5E]">
+                                  {typeof m.value === 'number' ? m.value.toFixed(2) : m.value}
+                                </span>
                               </div>
-                              <div className="text-[11px] text-[#6B7280] flex justify-between">
-                                <span>{al.type}</span>
-                                <span>{al.date}</span>
+                              <div className="w-full bg-[#E5E7EB] rounded-full h-1.5">
+                                <div
+                                  className="bg-[#1A3C5E] h-1.5 rounded-full"
+                                  style={{ width: `${(m.value || 0) * 100}%` }}
+                                />
                               </div>
                             </div>
-                          ))
-                        )}
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="border border-[#E5E7EB] rounded-lg p-4">
+                        <h4 className="font-bold text-xs uppercase text-[#6B7280] mb-2 flex items-center gap-1.5">
+                          <Activity className="w-3.5 h-3.5 text-[#1A3C5E]" />
+                          Associated Alert History ({detailData.alerts?.length || 0})
+                        </h4>
+                        <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                          {detailData.alerts?.length === 0 ? (
+                            <p className="text-xs text-[#6B7280] py-4 text-center">No alerts recorded for this entity.</p>
+                          ) : (
+                            detailData.alerts.map((al: any) => (
+                              <div key={al.id} className="p-2 rounded border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
+                                <div className="flex items-center justify-between mb-0.5">
+                                  <span className="font-semibold text-[#1F2937]">{al.title}</span>
+                                  <RiskBadge tier={al.severity} />
+                                </div>
+                                <div className="text-[11px] text-[#6B7280] flex justify-between">
+                                  <span>{al.type}</span>
+                                  <span>{al.date}</span>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Actions */}
-                  <div className="flex flex-wrap gap-3 pt-4 border-t border-[#DDE1E7]">
-                    <button
-                      onClick={() => handleChangeStatus('WATCHLIST')}
-                      disabled={modalActionLoading || detailData.profile.status === 'WATCHLIST'}
-                      className="px-4 py-2 bg-[#E8A020] text-white rounded-lg text-xs font-semibold hover:bg-[#C88210] transition-colors disabled:opacity-50"
-                    >
-                      Place on Watchlist
-                    </button>
-                    <button
-                      onClick={() => handleChangeStatus('SUSPENDED')}
-                      disabled={modalActionLoading || detailData.profile.status === 'SUSPENDED'}
-                      className="px-4 py-2 bg-[#C0392B] text-white rounded-lg text-xs font-semibold hover:bg-[#962D22] transition-colors disabled:opacity-50"
-                    >
-                      Suspend Entity
-                    </button>
-                    <button
-                      onClick={() => handleChangeStatus('CLEAN')}
-                      disabled={modalActionLoading || detailData.profile.status === 'CLEAN'}
-                      className="px-4 py-2 border border-[#2E7D52] text-[#2E7D52] hover:bg-[#E8F8F0] rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
-                    >
-                      Mark as Clean
-                    </button>
-                    <div className="flex-1"></div>
-                    <button
-                      onClick={handleRecalculate}
-                      disabled={modalActionLoading}
-                      className="px-4 py-2 border border-[#1A3C5E] text-[#1A3C5E] hover:bg-[#EBF5FB] rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5"
-                    >
-                      {modalActionLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                      Recalculate Score
-                    </button>
-                  </div>
-                </>
-              ) : null}
+                    {/* Actions */}
+                    <div className="flex flex-wrap gap-3 pt-4 border-t border-[#DDE1E7]">
+                      <button
+                        onClick={() => handleChangeStatus('WATCHLIST')}
+                        disabled={modalActionLoading || detailData.profile.status === 'WATCHLIST'}
+                        className="px-4 py-2 bg-[#E8A020] text-white rounded-lg text-xs font-semibold hover:bg-[#C88210] transition-colors disabled:opacity-50"
+                      >
+                        Place on Watchlist
+                      </button>
+                      <button
+                        onClick={() => handleChangeStatus('SUSPENDED')}
+                        disabled={modalActionLoading || detailData.profile.status === 'SUSPENDED'}
+                        className="px-4 py-2 bg-[#C0392B] text-white rounded-lg text-xs font-semibold hover:bg-[#962D22] transition-colors disabled:opacity-50"
+                      >
+                        Suspend Entity
+                      </button>
+                      <button
+                        onClick={() => handleChangeStatus('CLEAN')}
+                        disabled={modalActionLoading || detailData.profile.status === 'CLEAN'}
+                        className="px-4 py-2 border border-[#2E7D52] text-[#2E7D52] hover:bg-[#E8F8F0] rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                      >
+                        Mark as Clean
+                      </button>
+                      <div className="flex-1"></div>
+                      <button
+                        onClick={handleRecalculate}
+                        disabled={modalActionLoading}
+                        className="px-4 py-2 border border-[#1A3C5E] text-[#1A3C5E] hover:bg-[#EBF5FB] rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5"
+                      >
+                        {modalActionLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                        Recalculate Score
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

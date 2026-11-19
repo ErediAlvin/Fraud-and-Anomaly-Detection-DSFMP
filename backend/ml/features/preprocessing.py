@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, RobustScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 
 
@@ -120,4 +120,78 @@ def build_preprocessor() -> ColumnTransformer:
             ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CATEGORICAL_FEATURES)
         ],
         remainder="drop"
+    )
+
+
+# Target feature sets for Autoencoder pattern reconstruction
+AE_NUMERIC_FEATURES = [
+    "log_amount",
+    "log_amount_per_student",
+    "amount_to_school_avg_ratio",
+    "sin_hour",
+    "cos_hour",
+    "sin_day",
+    "cos_day",
+    "is_weekend",
+    "is_off_hours",
+    "rolling_24h_count",
+    "log_rolling_24h_amount",
+    "amount_to_rolling_ratio",
+    "is_round_100k",
+    "is_round_50k",
+    "is_round_10k",
+    "is_whole_integer",
+]
+
+
+class AutoencoderFeatureExtractor(BaseEstimator, TransformerMixin):
+    """
+    Extracts continuous, cyclical, and structural pattern features for the
+    Autoencoder reconstruction model. Preserves compatibility with raw dict
+    API payloads and cleaned pandas DataFrames.
+    """
+
+    def __init__(self):
+        self._base_extractor = TransactionFeatureExtractor()
+
+    def fit(self, X: Union[pd.DataFrame, List[Dict[str, Any]]], y=None):
+        return self
+
+    def transform(self, X: Union[pd.DataFrame, List[Dict[str, Any]], Dict[str, Any]]) -> pd.DataFrame:
+        df = self._base_extractor.transform(X)
+
+        # Cyclical temporal coordinates for smooth manifold reconstruction
+        hours = pd.to_numeric(df["hour_of_day"], errors="coerce").fillna(12.0)
+        days = pd.to_numeric(df["day_of_week"], errors="coerce").fillna(2.0)
+        df["sin_hour"] = np.sin(2.0 * np.pi * hours / 24.0)
+        df["cos_hour"] = np.cos(2.0 * np.pi * hours / 24.0)
+        df["sin_day"] = np.sin(2.0 * np.pi * days / 7.0)
+        df["cos_day"] = np.cos(2.0 * np.pi * days / 7.0)
+
+        # Rolling velocity share ratio
+        amounts = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0).clip(lower=0.0)
+        if "rolling_24h_amount" in df.columns:
+            rolling_amt = pd.to_numeric(df["rolling_24h_amount"], errors="coerce").fillna(amounts).clip(lower=0.0)
+        else:
+            rolling_amt = np.expm1(pd.to_numeric(df["log_rolling_24h_amount"], errors="coerce").fillna(np.log1p(amounts)))
+        df["amount_to_rolling_ratio"] = amounts / (rolling_amt + 1.0)
+
+        # Round-number and structuring indicators (targets ROUND_NUMBER_DRAIN)
+        rounded_amt = np.round(amounts, 2)
+        df["is_round_100k"] = ((rounded_amt >= 100000.0) & (np.isclose(rounded_amt % 100000.0, 0.0, atol=1e-4))).astype(float)
+        df["is_round_50k"] = ((rounded_amt >= 50000.0) & (np.isclose(rounded_amt % 50000.0, 0.0, atol=1e-4))).astype(float)
+        df["is_round_10k"] = ((rounded_amt >= 10000.0) & (np.isclose(rounded_amt % 10000.0, 0.0, atol=1e-4))).astype(float)
+        df["is_whole_integer"] = np.isclose(rounded_amt, np.floor(rounded_amt), atol=1e-4).astype(float)
+
+        return df
+
+
+def build_autoencoder_preprocessor() -> ColumnTransformer:
+    """Creates a ColumnTransformer pipeline tailored for Autoencoder reconstruction."""
+    return ColumnTransformer(
+        transformers=[
+            ("num", RobustScaler(), AE_NUMERIC_FEATURES),
+            ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CATEGORICAL_FEATURES),
+        ],
+        remainder="drop",
     )

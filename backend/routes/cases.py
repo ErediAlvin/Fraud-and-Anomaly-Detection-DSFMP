@@ -866,24 +866,52 @@ async def assign_case(
     except Exception as e:
         print(f"[WARN] Failed to write audit log for assignment: {e}")
 
-    # Dispatch notification to investigator
+    # 1. Dispatch in-app notification to the assigned investigator (Receiver)
+    notif_receiver = None
     try:
-        notif_uuid = str(uuid.uuid4())
+        notif_uuid_rec = str(uuid.uuid4())
+        rec_title = f"New Case Assigned: {case_number}"
+        rec_msg = f"You have been assigned to investigate {case['title']} by {actor_name}."
         await db.execute(
             text("""
                 INSERT INTO notifications (id, user_id, type, title, message, link)
                 VALUES (:nid, :uid, 'CASE_UPDATE', :title, :message, :link)
             """),
             {
-                "nid": notif_uuid,
+                "nid": notif_uuid_rec,
                 "uid": resolved_assignee_id,
-                "title": f"Assigned to Case: {case_number}",
-                "message": f"You have been assigned to investigate {case['title']}.",
+                "title": rec_title,
+                "message": rec_msg,
                 "link": f"/cases?id={case_number}",
             },
         )
+        notif_receiver = {"title": rec_title, "message": rec_msg, "to": assignee_name}
     except Exception as e:
-        print(f"[WARN] Failed to dispatch assignment notification: {e}")
+        print(f"[WARN] Failed to dispatch assignment notification to receiver: {e}")
+
+    # 2. Dispatch in-app notification to the assigner (Confirmation)
+    notif_assigner = None
+    try:
+        if actor_id:
+            notif_uuid_asg = str(uuid.uuid4())
+            asg_title = f"Case Assignment Confirmed: {case_number}"
+            asg_msg = f"You assigned Case {case_number} ('{case['title']}') to {assignee_name}."
+            await db.execute(
+                text("""
+                    INSERT INTO notifications (id, user_id, type, title, message, link)
+                    VALUES (:nid, :uid, 'CASE_UPDATE', :title, :message, :link)
+                """),
+                {
+                    "nid": notif_uuid_asg,
+                    "uid": actor_id,
+                    "title": asg_title,
+                    "message": asg_msg,
+                    "link": f"/cases?id={case_number}",
+                },
+            )
+            notif_assigner = {"title": asg_title, "message": asg_msg, "to": actor_name}
+    except Exception as e:
+        print(f"[WARN] Failed to dispatch assignment notification to assigner: {e}")
 
     await db.commit()
 
@@ -893,8 +921,14 @@ async def assign_case(
         "case_id": case_uuid,
         "case_number": case_number,
         "assigned_to": assignee_name,
+        "assignee_id": resolved_assignee_id,
+        "assigned_by": actor_name,
         "stage": DB_STATUS_TO_STAGE.get(new_status, "DETECTED"),
         "status": new_status,
+        "notifications_dispatched": {
+            "receiver": notif_receiver,
+            "assigner": notif_assigner,
+        },
     }
 
 

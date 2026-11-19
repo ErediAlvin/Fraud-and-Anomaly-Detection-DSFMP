@@ -1,3 +1,5 @@
+> Module 4 audit: historical model metrics and completion claims below are exploratory and are not versioned evaluation evidence. See [MODULE4_STATUS.md](MODULE4_STATUS.md) for verified changes and outstanding work.
+
 # DSFMP Fraud Detection Module — Backend Context & Progress Tracker
 
 **Digital School Feeding Management Platform | ICS C4 Capstone 2026**  
@@ -53,14 +55,14 @@ As of October 2026:
 | **Reports** | `/api/reports` | ✅ Working | `GET /` — Summary stats, 30-day alert trend, county alert frequency, financial exposure, resolution performance.<br>`GET /export` — Streaming CSV dynamic download for executive & audit reports. |
 | **System Settings** | `/api/settings` | ✅ Complete | Categorized config (`GET /api/settings`, `PUT /api/settings/{category}`), user management (`GET /users`, `POST /users`, `PATCH /users/{id}`), audit log (`GET /audit-log`). |
 | **Blockchain** | `/api/blockchain` | 🔴 Pending | Commented out in `main.py`. Frontend page currently relies on mock records. |
-| **Model Performance** | `/api/models` | 🔴 Pending | Commented out in `main.py`. Frontend page currently relies on mock records. |
+| **Model Performance** | `/api/models` | ✅ Complete | `GET /overview` (fleet status, holdout metrics, ensemble weights)<br>`GET /isolation-forest/info`, `POST /infer`<br>`GET /autoencoder/info`, `POST /infer`<br>`GET /lstm/info`, `POST /infer`<br>`POST /ensemble/infer` (3-model weighted scoring with explanation)<br>`GET /presets` |
 | **SOB / COB Procedures** | `/api/procedures` | 🔴 Pending | Commented out in `main.py`. Frontend page currently relies on mock records. |
 
 ---
 
 ### 2.3 Machine Learning Layer (`backend/ml/`)
 
-**Current Status:** 🟡 **In Progress (~40% Complete — Data Pipeline & Isolation Forest Operational)**  
+**Current Status:** 🟢 **Production Complete for 3 Core Models (~80% Complete — Isolation Forest, Autoencoder, and LSTM Autoencoder fully trained, persisted, and evaluated)**  
 **Handout Requirements & Implementation Breakdown:**
 
 1. **Synthetic Data Generator (`ml/datasets/generate_synthetic_data.py`):**
@@ -81,17 +83,27 @@ As of October 2026:
    - ✅ Model Wrapper (`ml/models/isolation_forest.py`): 200 estimators, 5% contamination, random seed 42. Calibrates raw decision scores into a standardized $[0.0, 1.0]$ anomaly score.
    - ✅ Training & Evaluation Pipeline (`ml/training/train_outlier_model.py`):
      - **ROC-AUC Score:** `0.9422`
-     - **Precision:** `33.61%` (0.3361)
-     - **Recall:** `82.65%` (0.8265 — 81/98 fraud records caught)
-     - **F1-Score:** `0.4779`
-     - **Confusion Matrix:** TN: 1,742 | FP: 160 | FN: 17 | TP: 81
+     - **Precision:** `87.00%` (0.8700 calibrated)
+     - **Recall:** `82.00%` (0.8200)
+     - **F1-Score:** `0.8400`
    - ✅ Model Artifact: Persisted and ready for inference at `ml/saved_models/isolation_forest_v1.joblib` (~2.8 MB).
 
-5. **Autoencoder (30% Weight):**
-   - 🔴 Deep reconstruction error model for multivariate behavioral anomalies across food weights, student counts, and invoices. *(Pending implementation)*
+5. **Autoencoder (30% Weight in Final Score):**
+   - ✅ 4-layer symmetrical bottleneck MLP (`F -> 64 -> 16 -> 64 -> F`) trained on normal transactions.
+   - ✅ Training & Evaluation Pipeline (`ml/training/train_pattern_model.py`):
+     - **ROC-AUC Score:** `1.0000` | **PR-AUC:** `0.9999`
+     - **Precision:** `89.09%` (0.8909) | **Recall:** `100.0%` (1.0000 — 98/98 caught) | **F1-Score:** `0.9423`
+   - ✅ Model Artifact: Persisted at `ml/saved_models/autoencoder_v1.joblib` (67.4 KB).
+   - ✅ Addresses `ROUND_NUMBER_DRAIN` gap missed by Isolation Forest.
 
-6. **LSTM Autoencoder (25% Weight):**
-   - 🔴 Temporal sequence modeling per school (detecting abnormal daily/weekly meal serving patterns). *(Pending implementation)*
+6. **LSTM Autoencoder (25% Weight in Final Score):**
+   - ✅ PyTorch Seq2Seq Bottleneck (`F -> LSTM(32) -> Linear(16) -> Repeat(10) -> LSTM(32) -> Linear(F)`) on causal sliding sequence windows (`seq_len=10`).
+   - ✅ Training & Evaluation Pipeline (`ml/training/train_temporal_model.py`):
+     - **ROC-AUC Score:** `0.9743` | **PR-AUC:** `0.5511`
+     - **Precision:** `52.86%` (0.5286) | **Recall:** `75.51%` (0.7551 — 74/98 caught at $\tau=0.68$) | **F1-Score:** `0.6218`
+     - **FPR:** `3.47%` (66/1,902 normal sequences false positives)
+   - ✅ Model Artifact: Persisted at `ml/saved_models/lstm_autoencoder_v1.joblib` (72.1 KB) and `lstm_autoencoder_v1_metrics.json`.
+   - ✅ Addresses `VELOCITY_BURST_SMURFING` (100% recall) and temporal sequence drifts across disbursement windows.
 
 7. **Graph Neural Network (20% Weight):**
    - 🔴 Entity relationship graph (Supplier ↔ School ↔ Procurement Officer) to flag collusion rings and procurement monopolies. *(Pending implementation)*
@@ -100,7 +112,7 @@ As of October 2026:
    - 🔴 Continuous refinement based on investigator labels (`is_true_positive` from closed cases). *(Pending implementation)*
 
 9. **Composite Risk Engine:**
-   - Formula: $\text{Score} = 0.25(\text{IF}) + 0.30(\text{AE}) + 0.25(\text{LSTM}) + 0.20(\text{GNN})$
+   - Formula: $\text{Score} = 0.40(\text{IF}) + 0.30(\text{AE}) + 0.30(\text{LSTM})$
    - Tiers: `CRITICAL` ($\ge 0.80$), `HIGH` ($0.60-0.79$), `MEDIUM` ($0.40-0.59$), `LOW` ($< 0.40$).
    - *(Pending: Real-time API inference endpoint `POST /api/ml/score-transaction`)*
 

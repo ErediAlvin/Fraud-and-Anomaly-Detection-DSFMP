@@ -81,6 +81,18 @@ interface CaseDetail {
   }>;
 }
 
+interface SystemUser {
+  id: string;
+  name: string;
+  firstName?: string;
+  lastName?: string;
+  email: string;
+  role: string;
+  rawRole?: string;
+  status?: string;
+  isActive?: boolean;
+}
+
 export function CaseManagement() {
   const [view, setView] = useState<'kanban' | 'table'>('kanban');
   const [cases, setCases] = useState<Case[]>([]);
@@ -100,7 +112,13 @@ export function CaseManagement() {
   const [newComment, setNewComment] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
-  const [assigneeEmail, setAssigneeEmail] = useState('');
+  const [users, setUsers] = useState<SystemUser[]>([]);
+  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>('');
+  const [assignmentNotice, setAssignmentNotice] = useState<{
+    receiverName: string;
+    assignerName: string;
+    caseNumber: string;
+  } | null>(null);
 
   // New Case Modal State
   const [isNewCaseModalOpen, setIsNewCaseModalOpen] = useState(false);
@@ -145,18 +163,43 @@ export function CaseManagement() {
     }
   };
 
+  // Load available system users for investigator assignment
   useEffect(() => {
     loadCases();
+
+    async function loadUsers() {
+      try {
+        const res = await api.get<SystemUser[]>('/settings/users');
+        if (Array.isArray(res)) {
+          setUsers(res.filter((u) => u.isActive !== false));
+        }
+      } catch (err) {
+        console.warn('Failed to load system users for assignment dropdown:', err);
+      }
+    }
+    loadUsers();
   }, []);
 
   // Fetch Full Case Detail when a case is selected
   const handleOpenDetail = async (caseId: string) => {
     setSelectedCaseId(caseId);
     setDetailLoading(true);
+    setAssignmentNotice(null);
     try {
       const detail = await api.get<CaseDetail>(`/cases/${caseId}`);
       setCaseDetail(detail);
-      setAssigneeEmail(detail.assignedTo?.email || '');
+
+      // Pre-select current assignee in dropdown if present
+      if (detail.assignedTo?.id) {
+        setSelectedAssigneeId(detail.assignedTo.id);
+      } else if (detail.assignedTo?.email) {
+        const match = users.find(
+          (u) => u.email.toLowerCase() === detail.assignedTo?.email.toLowerCase()
+        );
+        setSelectedAssigneeId(match ? match.id : '');
+      } else {
+        setSelectedAssigneeId('');
+      }
     } catch (err: any) {
       alert(err.message || 'Failed to fetch case dossier.');
       setSelectedCaseId(null);
@@ -185,13 +228,27 @@ export function CaseManagement() {
   // Assign Investigator (POST /api/cases/{id}/assign)
   const handleAssignInvestigator = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCaseId || !assigneeEmail.trim()) return;
+    if (!selectedCaseId || !selectedAssigneeId) return;
     setIsAssigning(true);
     try {
-      const res = await api.post<{ status: string; assigned_to: string; stage: string }>(
-        `/cases/${selectedCaseId}/assign`,
-        { email: assigneeEmail.trim() }
-      );
+      const targetUser = users.find((u) => u.id === selectedAssigneeId);
+      const res = await api.post<{
+        status: string;
+        assigned_to: string;
+        assignee_id?: string;
+        assigned_by?: string;
+        case_number?: string;
+        stage: string;
+        notifications_dispatched?: {
+          receiver: { name?: string; title?: string; message?: string } | null;
+          assigner: { name?: string; title?: string; message?: string } | null;
+        };
+      }>(`/cases/${selectedCaseId}/assign`, {
+        user_id: selectedAssigneeId,
+        email: targetUser?.email,
+      });
+
+      // Update Kanban and Table state
       setCases((prev) =>
         prev.map((c) =>
           c.id === selectedCaseId || c.db_id === selectedCaseId
@@ -199,19 +256,30 @@ export function CaseManagement() {
             : c
         )
       );
+
+      // Update active dossier detail
       if (caseDetail) {
         setCaseDetail({
           ...caseDetail,
           assignedTo: {
-            id: '',
+            id: res.assignee_id || selectedAssigneeId,
             name: res.assigned_to,
-            email: assigneeEmail.trim(),
-            role: 'Investigator',
+            email: targetUser?.email || '',
+            role: targetUser?.role || 'Investigator',
           },
           stage: res.stage as any,
         });
       }
-      alert(`Case assigned to ${res.assigned_to}`);
+
+      // Display assignment notice with both receiver and assigner details
+      setAssignmentNotice({
+        receiverName: res.assigned_to,
+        assignerName: res.assigned_by || 'Current User',
+        caseNumber: res.case_number || caseDetail?.db_id || selectedCaseId,
+      });
+
+      // Dispatch event to trigger Header notification bell refresh
+      window.dispatchEvent(new CustomEvent('dsfmp_notification_refresh'));
     } catch (err: any) {
       alert(err.message || 'Failed to assign investigator.');
     } finally {
@@ -564,26 +632,58 @@ export function CaseManagement() {
                     <span className="text-xs font-bold text-[#6B7280] uppercase tracking-wider">
                       Assigned Investigator
                     </span>
-                    <span className="text-xs font-medium text-[#1A3C5E]">
-                      {caseDetail.assignedTo?.name || 'Currently Unassigned'}
+                    <span className="text-xs font-medium text-[#1A3C5E] bg-[#EBF5FB] px-2 py-0.5 rounded">
+                      {caseDetail.assignedTo?.name ? `${caseDetail.assignedTo.name} (${caseDetail.assignedTo.role || 'Investigator'})` : 'Currently Unassigned'}
                     </span>
                   </div>
-                  <form onSubmit={handleAssignInvestigator} className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Enter investigator email or UUID..."
-                      value={assigneeEmail}
-                      onChange={(e) => setAssigneeEmail(e.target.value)}
-                      className="flex-1 text-xs border border-[#DDE1E7] rounded-md px-3 py-1.5 focus:outline-none focus:border-[#1A3C5E]"
-                    />
-                    <button
-                      type="submit"
-                      disabled={isAssigning}
-                      className="bg-[#1A3C5E] text-white text-xs px-3 py-1.5 rounded-md font-medium hover:bg-[#2471A3] transition-colors disabled:opacity-50 flex items-center gap-1"
-                    >
-                      <UserCheck className="w-3.5 h-3.5" />
-                      <span>{isAssigning ? 'Saving...' : 'Assign'}</span>
-                    </button>
+
+                  <form onSubmit={handleAssignInvestigator} className="space-y-3">
+                    <div className="flex gap-2">
+                      <select
+                        value={selectedAssigneeId}
+                        onChange={(e) => setSelectedAssigneeId(e.target.value)}
+                        className="flex-1 text-xs border border-[#DDE1E7] rounded-md px-3 py-2 bg-white focus:outline-none focus:border-[#1A3C5E] cursor-pointer"
+                      >
+                        <option value="">-- Select Investigator / User to Assign --</option>
+                        {users.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.name} &bull; {u.role} ({u.email})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="submit"
+                        disabled={isAssigning || !selectedAssigneeId}
+                        className="bg-[#1A3C5E] text-white text-xs px-4 py-2 rounded-md font-semibold hover:bg-[#2471A3] transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>{isAssigning ? 'Assigning...' : 'Assign Case'}</span>
+                      </button>
+                    </div>
+
+                    {/* Assignment & Notifications Banner */}
+                    {assignmentNotice && (
+                      <div className="p-3 bg-[#E8F8F0] border border-[#2E7D52] rounded-lg text-xs space-y-1.5 animate-in fade-in">
+                        <div className="flex items-center gap-1.5 font-bold text-[#2E7D52]">
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>Case Assigned &amp; In-App Notifications Dispatched</span>
+                        </div>
+                        <p className="text-[#1F2937]">
+                          Case <strong>{assignmentNotice.caseNumber}</strong> has been successfully assigned to{' '}
+                          <strong>{assignmentNotice.receiverName}</strong>.
+                        </p>
+                        <div className="pt-1.5 border-t border-[#2E7D52]/20 text-[11px] text-[#2E7D52] space-y-1 font-medium">
+                          <div className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#2E7D52]"></span>
+                            <span><strong>Receiver Notification:</strong> Sent to {assignmentNotice.receiverName} (&ldquo;New Case Assigned&rdquo;)</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#2E7D52]"></span>
+                            <span><strong>Assigner Notification:</strong> Recorded for {assignmentNotice.assignerName} (&ldquo;Case Assignment Confirmed&rdquo;)</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </form>
                 </div>
 

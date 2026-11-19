@@ -175,7 +175,7 @@ export function Dashboard() {
                       <span className="text-xs text-[#6B7280]">{alert.time}</span>
                     </div>
                     <p className="font-semibold text-sm text-[#1C1C1E]">{alert.entity}</p>
-                    <p className="text-[10px] text-[#9CA3AF] font-mono mt-0.5">{alert.id}</p>
+                    <p className="text-[10px] text-[#2471A3] font-medium mt-0.5">High Priority Flag</p>
                   </div>
                 ))
               )}

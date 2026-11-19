@@ -1,0 +1,94 @@
+{
+  "model_id": "lstm_autoencoder_v1",
+  "model_name": "LSTM Autoencoder Temporal Sequence Detector",
+  "version": "v1.0.0",
+  "seq_len": 10,
+  "features": [
+    "log_hours_since_prev",
+    "rolling_7d_count",
+    "log_rolling_7d_amount",
+    "amount_ewma_ratio",
+    "log_amount",
+    "log_amount_per_student",
+    "amount_to_school_avg_ratio",
+    "amount_to_rolling_ratio",
+    "rolling_24h_count",
+    "log_rolling_24h_amount",
+    "sin_hour",
+    "cos_hour",
+    "sin_day",
+    "cos_day",
+    "is_weekend",
+    "is_off_hours",
+    "is_round_100k",
+    "is_round_50k",
+    "is_round_10k",
+    "is_whole_integer",
+    "type_SUBSIDY_DISBURSEMENT",
+    "type_SUPPLIER_PAYMENT",
+    "type_PARENTAL_CONTRIBUTION",
+    "type_MPESA_PAYMENT",
+    "type_REFUND",
+    "type_ADJUSTMENT",
+    "pm_BANK_TRANSFER",
+    "pm_MPESA",
+    "pm_CHEQUE",
+    "pm_CASH",
+    "pm_SYSTEM"
+  ],
+  "threshold": 0.68,
+  "test_records": 2000,
+  "test_frauds": 98,
+  "roc_auc": 0.9743,
+  "pr_auc": 0.5511,
+  "precision": 0.5286,
+  "recall": 0.7551,
+  "f1": 0.6218,
+  "fpr": 0.0347,
+  "confusion_matrix": {
+    "tn": 1836,
+    "fp": 66,
+    "fn": 24,
+    "tp": 74
+  },
+  "patterns": {
+    "DISPROPORTIONATE_PER_STUDENT": {
+      "total": 21,
+      "detected": 21,
+      "recall": 1.0,
+      "avg_score": 1.0
+    },
+    "EXTREME_AMOUNT_OUTLIER": {
+      "total": 16,
+      "detected": 13,
+      "recall": 0.8125,
+      "avg_score": 0.8622
+    },
+    "OFF_HOURS_DRAIN": {
+      "total": 16,
+      "detected": 9,
+      "recall": 0.5625,
+      "avg_score": 0.7369
+    },
+    "ROUND_NUMBER_DRAIN": {
+      "total": 15,
+      "detected": 12,
+      "recall": 0.8,
+      "avg_score": 0.8387
+    },
+    "SUSPICIOUS_PAYMENT_METHOD": {
+      "total": 18,
+      "detected": 7,
+      "recall": 0.3889,
+      "avg_score": 0.7032
+    },
+    "VELOCITY_BURST_SMURFING": {
+      "total": 12,
+      "detected": 12,
+      "recall": 1.0,
+      "avg_score": 0.9459
+    }
+  },
+  "artifact_path": "C:\\Users\\alvin\\Desktop\\Projects\\IS Project II\\Fraud-System\\backend\\ml\\saved_models\\lstm_autoencoder_v1.joblib",
+  "artifact_size_kb": 72.1
+}
