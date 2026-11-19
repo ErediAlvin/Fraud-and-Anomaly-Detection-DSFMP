@@ -33,6 +33,12 @@ interface Preset {
   expected_outcome: string;
 }
 
+interface ReconstructionDriver {
+  feature: string;
+  squared_error: number;
+  share: number;
+}
+
 interface InferenceResponse {
   model_name: string;
   model_version: string;
@@ -42,6 +48,7 @@ interface InferenceResponse {
   threshold: number;
   latency_ms: number;
   reasons: string[];
+  reconstruction_drivers?: ReconstructionDriver[];
   features_extracted: {
     amount: number;
     type: string;
@@ -57,9 +64,49 @@ interface InferenceResponse {
   };
 }
 
-export function IsolationForestTester() {
+interface EnsembleBreakdownItem {
+  id: string;
+  name: string;
+  status: string;
+  score: number;
+  configured_weight: number;
+  effective_weight: number;
+  weighted_contribution: number;
+  effective_contribution: number;
+}
+
+interface EnsembleInferenceResponse {
+  composite_score: number;
+  raw_weighted_sum: number;
+  risk_tier: string;
+  is_anomaly: boolean;
+  total_latency_ms: number;
+  weights: Record<string, number>;
+  breakdown: EnsembleBreakdownItem[];
+  isolation_forest: InferenceResponse;
+  autoencoder: InferenceResponse;
+  lstm?: InferenceResponse;
+  reasons: string[];
+  features_extracted: InferenceResponse['features_extracted'];
+}
+
+export interface ScoringWeights {
+  weight_if: number;
+  weight_ae: number;
+  weight_lstm: number;
+  weight_gnn: number;
+}
+
+interface TesterProps {
+  weights?: ScoringWeights;
+}
+
+type ModelMode = 'ensemble' | 'autoencoder' | 'lstm' | 'isolation-forest';
+
+export function IsolationForestTester({ weights }: TesterProps) {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState<string>('normal_subsidy');
+  const [modelMode, setModelMode] = useState<ModelMode>('ensemble');
   
   // Form State
   const [amount, setAmount] = useState<number>(250000);
@@ -70,11 +117,12 @@ export function IsolationForestTester() {
   const [schoolAvgAmount, setSchoolAvgAmount] = useState<number>(240000);
   const [rolling24hCount, setRolling24hCount] = useState<number>(1);
   const [rolling24hAmount, setRolling24hAmount] = useState<number>(250000);
-  const [threshold, setThreshold] = useState<number>(0.65);
+  const [threshold, setThreshold] = useState<number>(0.70);
 
   // Execution State
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<InferenceResponse | null>(null);
+  const [ensembleResult, setEnsembleResult] = useState<EnsembleInferenceResponse | null>(null);
   const [error, setError] = useState<string>('');
 
   // Fetch presets on mount
@@ -105,8 +153,9 @@ export function IsolationForestTester() {
     setSchoolAvgAmount(preset.payload.school_avg_amount);
     setRolling24hCount(preset.payload.rolling_24h_count);
     setRolling24hAmount(preset.payload.rolling_24h_amount);
-    setThreshold(preset.payload.threshold || 0.65);
+    setThreshold(preset.payload.threshold || 0.70);
     setResult(null);
+    setEnsembleResult(null);
     setError('');
   };
 
@@ -114,7 +163,7 @@ export function IsolationForestTester() {
     setLoading(true);
     setError('');
     try {
-      const payload = {
+      const basePayload = {
         amount: Number(amount),
         type: txType,
         payment_method: paymentMethod,
@@ -126,8 +175,27 @@ export function IsolationForestTester() {
         threshold: Number(threshold)
       };
 
-      const res = await api.post<InferenceResponse>('/models/isolation-forest/infer', payload);
-      setResult(res);
+      if (modelMode === 'ensemble') {
+        const res = await api.post<EnsembleInferenceResponse>('/models/ensemble/infer', {
+          ...basePayload,
+          if_threshold: 0.65,
+          ae_threshold: 0.70,
+          lstm_threshold: Number(threshold),
+          ...(weights ? { weights } : {}),
+        });
+        setEnsembleResult(res);
+        setResult(null);
+      } else {
+        const endpoint =
+          modelMode === 'autoencoder'
+            ? '/models/autoencoder/infer'
+            : modelMode === 'lstm'
+            ? '/models/lstm/infer'
+            : '/models/isolation-forest/infer';
+        const res = await api.post<InferenceResponse>(endpoint, basePayload);
+        setResult(res);
+        setEnsembleResult(null);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to execute inference.');
     } finally {
@@ -154,38 +222,80 @@ export function IsolationForestTester() {
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-[#1A3C5E] to-[#2471A3] p-5 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
             <Cpu className="w-5 h-5 text-[#E8A020]" />
             <span className="font-mono text-xs uppercase tracking-wider bg-white/10 px-2 py-0.5 rounded">
               Live Model Interface
             </span>
             <span className="text-xs bg-[#2E7D52] px-2 py-0.5 rounded-full font-semibold">
-              isolation_forest_v1.joblib
+              {modelMode === 'ensemble'
+                ? '3-Model Weighted Ensemble'
+                : modelMode === 'autoencoder'
+                ? 'autoencoder_v1.joblib'
+                : modelMode === 'lstm'
+                ? 'lstm_autoencoder_v1.joblib'
+                : 'isolation_forest_v1.joblib'}
             </span>
           </div>
-          <h2 className="text-xl font-bold">Isolation Forest Anomaly Detection Sandbox</h2>
+          <h2 className="text-xl font-bold">
+            {modelMode === 'ensemble'
+              ? 'Weighted Ensemble (IF + AE + LSTM) Detection Sandbox'
+              : modelMode === 'autoencoder'
+              ? 'Autoencoder Neural Reconstruction Sandbox'
+              : modelMode === 'lstm'
+              ? 'LSTM Autoencoder Temporal Sequence Sandbox'
+              : 'Isolation Forest Anomaly Detection Sandbox'}
+          </h2>
           <p className="text-xs text-blue-100">
-            Submit custom transaction parameters or test real-world fraud vectors to evaluate unsupervised outlier scoring in real time.
+            Submit custom transaction parameters or test real-world fraud vectors to inspect model scores, reconstruction drivers, and ensemble weights.
           </p>
         </div>
 
-        <button
-          onClick={handleRunInference}
-          disabled={loading}
-          className="flex items-center justify-center gap-2 bg-[#2E7D52] hover:bg-[#256843] active:scale-95 text-white px-5 py-2.5 rounded-lg font-semibold shadow transition-all cursor-pointer disabled:opacity-50"
-        >
-          {loading ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              <span>Scoring...</span>
-            </>
-          ) : (
-            <>
-              <Play className="w-4 h-4 fill-current" />
-              <span>Run Inference</span>
-            </>
-          )}
-        </button>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <div className="flex bg-white/10 p-1 rounded-lg border border-white/15 text-xs">
+            {[
+              { id: 'ensemble' as const, label: '3-Model Ensemble' },
+              { id: 'lstm' as const, label: 'LSTM Temporal' },
+              { id: 'autoencoder' as const, label: 'Autoencoder' },
+              { id: 'isolation-forest' as const, label: 'Isolation Forest' },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => {
+                  setModelMode(opt.id);
+                  setResult(null);
+                  setEnsembleResult(null);
+                }}
+                className={`px-2.5 py-1.5 rounded font-semibold transition-all cursor-pointer ${
+                  modelMode === opt.id
+                    ? 'bg-white text-[#1A3C5E] shadow-xs'
+                    : 'text-blue-100 hover:bg-white/10'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={handleRunInference}
+            disabled={loading}
+            className="flex items-center justify-center gap-2 bg-[#2E7D52] hover:bg-[#256843] active:scale-95 text-white px-5 py-2.5 rounded-lg font-semibold shadow transition-all cursor-pointer disabled:opacity-50"
+          >
+            {loading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Scoring...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4 fill-current" />
+                <span>Run Inference</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="p-6">
@@ -194,7 +304,7 @@ export function IsolationForestTester() {
           <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wider mb-2 block">
             Test Vector Presets (One-Click Scenarios)
           </label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {presets.map((preset) => (
               <button
                 key={preset.id}
@@ -348,7 +458,7 @@ export function IsolationForestTester() {
             <div className="mt-4 pt-4 border-t border-[#E2E8F0]">
               <div className="flex items-center justify-between mb-1.5">
                 <span className="font-semibold text-xs text-[#334155]">
-                  Classification Threshold ($\tau$)
+                  Classification Threshold (τ)
                 </span>
                 <span className="font-mono font-bold text-xs text-[#1A3C5E]">
                   {threshold.toFixed(2)}
@@ -379,13 +489,173 @@ export function IsolationForestTester() {
               </div>
             )}
 
-            {result ? (
+            {ensembleResult ? (
               <div className="bg-white border-2 border-[#1A3C5E] rounded-xl p-5 shadow-md flex-1 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
                     <div className="flex items-center gap-2">
                       <Zap className="w-5 h-5 text-[#2471A3]" />
-                      <span className="font-bold text-sm text-[#1C1C1E]">Inference Output</span>
+                      <span className="font-bold text-sm text-[#1C1C1E]">Weighted Ensemble Output</span>
+                    </div>
+                    <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                      {ensembleResult.total_latency_ms} ms
+                    </span>
+                  </div>
+
+                  {/* Composite Score Display */}
+                  <div className="text-center py-2">
+                    <div className="text-xs font-bold text-[#6B7280] uppercase tracking-wider mb-1">
+                      Composite Active-Weighted Score
+                    </div>
+                    <div className="text-4xl font-extrabold font-mono text-[#1C1C1E] tracking-tight mb-1">
+                      {ensembleResult.composite_score.toFixed(4)}
+                    </div>
+                    <div className="text-[11px] font-mono text-[#6B7280] mb-2">
+                      4-Model Raw Weighted Sum: {ensembleResult.raw_weighted_sum.toFixed(4)}
+                    </div>
+
+                    <div className="relative w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden">
+                      <div
+                        className={`h-3 rounded-full transition-all duration-500 ${
+                          ensembleResult.is_anomaly ? 'bg-[#C0392B]' : 'bg-[#2E7D52]'
+                        }`}
+                        style={{ width: `${Math.min(ensembleResult.composite_score * 100, 100)}%` }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-center gap-2 mb-4">
+                      <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${getTierColor(ensembleResult.risk_tier)}`}>
+                        {ensembleResult.risk_tier} RISK
+                      </span>
+                      <span
+                        className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 ${
+                          ensembleResult.is_anomaly
+                            ? 'bg-red-100 text-red-800 border border-red-300'
+                            : 'bg-green-100 text-green-800 border border-green-300'
+                        }`}
+                      >
+                        {ensembleResult.is_anomaly ? (
+                          <>
+                            <ShieldAlert className="w-3.5 h-3.5" /> ANOMALY DETECTED
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5" /> NORMAL BEHAVIOR
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Per-Model Score & Weight Table */}
+                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3 mb-4">
+                    <div className="text-[11px] font-bold text-[#334155] uppercase tracking-wide mb-2">
+                      Model Scores &amp; Ensemble Weights
+                    </div>
+                    <div className="space-y-2">
+                      {ensembleResult.breakdown.map((item) => (
+                        <div key={item.id} className="text-xs">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-[#1C1C1E]">{item.name}</span>
+                              <span
+                                className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                                  item.status === 'ACTIVE'
+                                    ? 'bg-green-100 text-green-800'
+                                    : 'bg-gray-200 text-gray-600'
+                                }`}
+                              >
+                                w={(item.configured_weight * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                            <span className="font-mono text-[#1A3C5E] font-bold">
+                              {item.status === 'ACTIVE'
+                                ? `${item.score.toFixed(4)} (+${item.effective_contribution.toFixed(3)})`
+                                : 'Pending Training'}
+                            </span>
+                          </div>
+                          {item.status === 'ACTIVE' && (
+                            <div className="w-full bg-gray-200 rounded-full h-1.5">
+                              <div
+                                className="bg-[#2471A3] h-1.5 rounded-full"
+                                style={{ width: `${Math.min(item.score * 100, 100)}%` }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Autoencoder Top Reconstruction Drivers */}
+                  {ensembleResult.autoencoder?.reconstruction_drivers &&
+                    ensembleResult.autoencoder.reconstruction_drivers.length > 0 && (
+                      <div className="mb-4 bg-blue-50/70 border border-blue-200 rounded-lg p-3">
+                        <div className="text-[11px] font-bold text-[#1A3C5E] uppercase tracking-wide mb-1.5">
+                          Autoencoder Top Reconstruction Error Drivers
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {ensembleResult.autoencoder.reconstruction_drivers.map((d) => (
+                            <span
+                              key={d.feature}
+                              className="text-[11px] font-mono bg-white border border-blue-200 text-[#1A3C5E] px-2 py-0.5 rounded"
+                            >
+                              {d.feature}: {(d.share * 100).toFixed(1)}%
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  {/* Reasons / Flags */}
+                  {ensembleResult.reasons && ensembleResult.reasons.length > 0 && (
+                    <div className="mb-4">
+                      <div className="text-xs font-bold text-[#475569] mb-1.5 flex items-center gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5 text-[#D35400]" />
+                        Identified Fraud Drivers:
+                      </div>
+                      <div className="space-y-1.5">
+                        {ensembleResult.reasons.map((reason, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-[#FEF3E2] border-l-4 border-[#E8A020] text-[#78350F] text-xs p-2 rounded-r"
+                          >
+                            {reason}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Extracted Engineered Features Summary */}
+                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3 text-xs">
+                    <span className="font-bold text-[#334155] block mb-2 text-[11px] uppercase tracking-wide">
+                      Engineered Features Extracted:
+                    </span>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px] text-[#475569]">
+                      <div>Off-Hours: <strong className={ensembleResult.features_extracted.is_off_hours ? 'text-red-600' : 'text-gray-700'}>{ensembleResult.features_extracted.is_off_hours ? 'YES' : 'NO'}</strong></div>
+                      <div>Hour of Day: <strong>{ensembleResult.features_extracted.hour_of_day}:00</strong></div>
+                      <div>Amount/Student: <strong>KES {ensembleResult.features_extracted.amount_per_student.toLocaleString()}</strong></div>
+                      <div>School Ratio: <strong>{ensembleResult.features_extracted.amount_to_school_avg_ratio}x</strong></div>
+                      <div>24h Count: <strong>{ensembleResult.features_extracted.rolling_24h_count}</strong></div>
+                      <div>Log Amount: <strong>{ensembleResult.features_extracted.log_amount}</strong></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-gray-100 text-center">
+                  <span className="text-[11px] text-[#6B7280]">
+                    Scored via active artifacts <code className="bg-gray-100 px-1 py-0.5 rounded">isolation_forest_v1.joblib</code>, <code className="bg-gray-100 px-1 py-0.5 rounded">autoencoder_v1.joblib</code> &amp; <code className="bg-gray-100 px-1 py-0.5 rounded">lstm_autoencoder_v1.joblib</code>
+                  </span>
+                </div>
+              </div>
+            ) : result ? (
+              <div className="bg-white border-2 border-[#1A3C5E] rounded-xl p-5 shadow-md flex-1 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-5 h-5 text-[#2471A3]" />
+                      <span className="font-bold text-sm text-[#1C1C1E]">{result.model_name} Output</span>
                     </div>
                     <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
                       {result.latency_ms} ms
@@ -436,6 +706,24 @@ export function IsolationForestTester() {
                     </div>
                   </div>
 
+                  {result.reconstruction_drivers && result.reconstruction_drivers.length > 0 && (
+                    <div className="mb-4 bg-blue-50/70 border border-blue-200 rounded-lg p-3">
+                      <div className="text-[11px] font-bold text-[#1A3C5E] uppercase tracking-wide mb-1.5">
+                        Top Reconstruction Error Drivers
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {result.reconstruction_drivers.map((d) => (
+                          <span
+                            key={d.feature}
+                            className="text-[11px] font-mono bg-white border border-blue-200 text-[#1A3C5E] px-2 py-0.5 rounded"
+                          >
+                            {d.feature}: {(d.share * 100).toFixed(1)}%
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Reasons / Flags */}
                   {result.reasons && result.reasons.length > 0 && (
                     <div className="mb-4">
@@ -474,7 +762,14 @@ export function IsolationForestTester() {
 
                 <div className="mt-4 pt-3 border-t border-gray-100 text-center">
                   <span className="text-[11px] text-[#6B7280]">
-                    Scored via active artifact <code className="bg-gray-100 px-1 py-0.5 rounded">isolation_forest_v1.joblib</code>
+                    Scored via active artifact{' '}
+                    <code className="bg-gray-100 px-1 py-0.5 rounded">
+                      {result.model_name === 'Autoencoder'
+                        ? 'autoencoder_v1.joblib'
+                        : result.model_name === 'LSTM Autoencoder'
+                        ? 'lstm_autoencoder_v1.joblib'
+                        : 'isolation_forest_v1.joblib'}
+                    </code>
                   </span>
                 </div>
               </div>

@@ -58,9 +58,23 @@ async def lifespan(app: FastAPI):
 
     # Load ML models into application state
     try:
-        from ml.models.scoring_engine import get_isolation_forest_model
+        from ml.models.scoring_engine import (
+            get_isolation_forest_model,
+            get_autoencoder_model,
+            get_lstm_model,
+        )
         app.state.isolation_forest = get_isolation_forest_model()
         print("[OK] Isolation Forest ML model loaded successfully into memory")
+        try:
+            app.state.autoencoder = get_autoencoder_model()
+            print("[OK] Autoencoder ML model loaded successfully into memory")
+        except Exception as ae_err:
+            print(f"[WARN] Autoencoder model load skipped or failed: {ae_err}")
+        try:
+            app.state.lstm_autoencoder = get_lstm_model()
+            print("[OK] LSTM Autoencoder ML model loaded successfully into memory")
+        except Exception as lstm_err:
+            print(f"[WARN] LSTM Autoencoder model load skipped or failed: {lstm_err}")
     except Exception as e:
         print(f"[WARN] Isolation Forest model load skipped or failed: {e}")
 
@@ -186,3 +200,6 @@ app.include_router(model_perf_router, prefix="/api/models", tags=["Model Perform
 
 from routes.settings import router as settings_router
 app.include_router(settings_router, prefix="/api/settings", tags=["System Settings"])
+
+from routes.notifications import router as notifications_router
+app.include_router(notifications_router, prefix="/api/notifications", tags=["Notifications"])

@@ -214,13 +214,14 @@ CREATE TABLE IF NOT EXISTS `transactions` (
   `description`     TEXT            NULL,
   `payment_method`  ENUM('MPESA','BANK_TRANSFER','CHEQUE','CASH','SYSTEM') NOT NULL DEFAULT 'SYSTEM',
   `status`          ENUM('PENDING','COMPLETED','FAILED','REVERSED','FLAGGED') NOT NULL DEFAULT 'PENDING',
+  `batch_id`        VARCHAR(64)     NULL     COMMENT 'Batch ingestion group ID',
   `period_start`    DATE            NULL     COMMENT 'Feeding period this payment covers',
   `period_end`      DATE            NULL,
   `approved_by`     CHAR(36)        NULL,
   `approved_at`     TIMESTAMP       NULL,
   -- ML risk scoring fields
   `risk_score`      DECIMAL(5,4)    NULL     COMMENT 'Composite ML score 0.0000–1.0000',
-  `risk_tier`       ENUM('LOW','MEDIUM','HIGH','CRITICAL') NULL,
+  `risk_tier`       ENUM('LOW','MEDIUM','HIGH','CRITICAL','EVALUATING') NULL,
   `if_score`        DECIMAL(5,4)    NULL     COMMENT 'Isolation Forest anomaly score',
   `ae_score`        DECIMAL(5,4)    NULL     COMMENT 'Autoencoder reconstruction error score',
   `lstm_score`      DECIMAL(5,4)    NULL     COMMENT 'LSTM temporal anomaly score',
@@ -346,6 +347,7 @@ CREATE TABLE IF NOT EXISTS `fraud_alerts` (
                       'DUPLICATE_IDENTITY',
                       'AMOUNT_DEVIATION',
                       'OFF_HOURS_TRANSACTION',
+                      'OFF_HOURS_DRAIN',
                       'OTHER'
                     )               NOT NULL,
   `severity`        ENUM('LOW','MEDIUM','HIGH','CRITICAL') NOT NULL,
@@ -363,7 +365,7 @@ CREATE TABLE IF NOT EXISTS `fraud_alerts` (
   `gnn_score`       DECIMAL(5,4)    NULL,
   `model_version`   VARCHAR(50)     NULL     COMMENT 'Version tag of the scoring model',
   -- Workflow
-  `status`          ENUM('NEW','ACKNOWLEDGED','INVESTIGATING','ESCALATED','RESOLVED','DISMISSED') NOT NULL DEFAULT 'NEW',
+  `status`          ENUM('NEW','ACKNOWLEDGED','UNDER_REVIEW','INVESTIGATING','ESCALATED','RESOLVED','DISMISSED') NOT NULL DEFAULT 'NEW',
   `assigned_to`     CHAR(36)        NULL,
   `resolved_at`     TIMESTAMP       NULL,
   `resolution_notes` TEXT           NULL,

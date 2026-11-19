@@ -1,3 +1,5 @@
+> Module 4 audit: historical model metrics and completion claims below are exploratory and are not versioned evaluation evidence. See [MODULE4_STATUS.md](MODULE4_STATUS.md) for verified changes and outstanding work.
+
 # Digital School Feeding Management Platform (DSFMP)
 ## Intelligent Fraud Detection, Risk Profiling & Immutable Audit System
 
@@ -504,8 +506,8 @@ To ensure day-to-day data integrity, the system implements **Start-of-Business (
   - [x] Synthetic data generator with Faker (10,000 transactions, 4 fraud vectors)
   - [x] Data cleaning & feature preprocessing pipeline (cyclical hour encoding, log scaling)
   - [x] Isolation Forest tabular anomaly detection model (ROC-AUC 0.9422, calibrated scoring)
-  - [ ] Autoencoder & temporal LSTM reconstruction models
-  - [ ] Graph Neural Network (GNN) entity relationship engine
+  - [x] Autoencoder & temporal LSTM reconstruction models
+  - [x] 3-Model Weighted Ensemble Scoring Pipeline (Isolation Forest 40%, Autoencoder 30%, LSTM Autoencoder 30%)
   - [ ] Real-time scoring inference service (`POST /api/ml/score-transaction`)
   - [ ] Cryptographic ledger audit verification
   - [ ] Full interactive Kanban drag-and-drop state mutation & investigator comment threads

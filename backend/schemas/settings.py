@@ -24,9 +24,13 @@ class GeneralSettings(BaseModel):
 
 class RiskThresholdSettings(BaseModel):
     model_threshold_if: float = Field(default=0.65, ge=0.0, le=1.0)
-    model_threshold_ae: float = Field(default=0.67, ge=0.0, le=1.0)
+    model_threshold_ae: float = Field(default=0.70, ge=0.0, le=1.0)
     model_threshold_lstm: float = Field(default=0.69, ge=0.0, le=1.0)
-    model_threshold_gnn: float = Field(default=0.71, ge=0.0, le=1.0)
+    model_threshold_gnn: Optional[float] = Field(default=0.71, ge=0.0, le=1.0)
+    weight_if: float = Field(default=0.40, ge=0.0, le=1.0)
+    weight_ae: float = Field(default=0.30, ge=0.0, le=1.0)
+    weight_lstm: float = Field(default=0.30, ge=0.0, le=1.0)
+    weight_gnn: Optional[float] = Field(default=0.00, ge=0.0, le=1.0)
     threshold_critical: float = Field(default=0.80, ge=0.0, le=1.0)
     threshold_high: float = Field(default=0.60, ge=0.0, le=1.0)
     threshold_medium: float = Field(default=0.40, ge=0.0, le=1.0)

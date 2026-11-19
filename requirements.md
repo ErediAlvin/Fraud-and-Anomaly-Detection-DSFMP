@@ -102,7 +102,7 @@ The system requirements identified for this project are presented in the followi
 - **Actor:** Composite Risk Engine.
 - **Trigger:** Completion of multi-model scoring for an entity or transaction.
 - **Expected Behavior:** The system shall calculate the weighted composite risk score:
-  $$\text{Score} = 0.25(\text{IF}) + 0.30(\text{AE}) + 0.25(\text{LSTM}) + 0.20(\text{GNN})$$
+  $$\text{Score} = 0.40(\text{IF}) + 0.30(\text{AE}) + 0.30(\text{LSTM})$$
   The system shall dynamically classify the entity into one of four operational risk tiers via `settings.get_risk_tier()`:
   - **CRITICAL** ($\ge 0.80$): Auto-generate high-priority alert and flag entity for immediate freeze.
   - **HIGH** ($0.60 - 0.79$): Auto-generate alert queued for senior fraud analyst review.

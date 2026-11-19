@@ -131,7 +131,6 @@ async def get_risk_profiles(
         {"metric": "Isolation Forest", "value": round(min(base_score + 0.05, 0.98), 2)},
         {"metric": "Autoencoder", "value": round(min(base_score + 0.08, 0.99), 2)},
         {"metric": "LSTM Temporal", "value": round(min(base_score + 0.02, 0.94), 2)},
-        {"metric": "GNN Collusion", "value": round(min(base_score + 0.12, 0.97), 2)},
     ]
 
     # Generate 90-day history trend baseline
@@ -180,12 +179,11 @@ async def get_profile_detail(profile_id: str, db: AsyncSession = Depends(get_db)
     p_id, e_type, e_id, comp_score, tier, p_status, last_scored, created_at, name, county = row
     comp_score = float(comp_score)
 
-    # 4-Model Breakdown
+    # 3-Model Breakdown
     radar = [
         {"metric": "Isolation Forest", "value": round(min(comp_score * 0.95, 0.99), 2)},
         {"metric": "Autoencoder", "value": round(min(comp_score * 1.05, 0.99), 2)},
         {"metric": "LSTM Temporal", "value": round(min(comp_score * 0.90, 0.99), 2)},
-        {"metric": "GNN Collusion", "value": round(min(comp_score * 1.10, 0.99), 2)},
     ]
 
     # 90-Day Trend for this entity

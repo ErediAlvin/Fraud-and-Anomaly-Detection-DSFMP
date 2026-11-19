@@ -1,3 +1,4 @@
+
 # DSFMP Fraud Detection System — Project Progress & Milestone Tracker
 
 **Digital School Feeding Management Platform (DSFMP)**  
@@ -9,7 +10,7 @@
 
 ---
 
-## 1. Executive Milestone Summary
+## 1. Executive Milestone Summary 
 
 | Phase | Milestone Description | Target Completion | Current Status | Progress |
 |---|---|---|---|:---:|
@@ -146,7 +147,39 @@
   ```
   Ran 9 tests in 0.313s - OK (9/9 Passed, 0 Failures)
   ```
-- Frontend build validated: `vite build` completed in `8.69s` with 0 TypeScript errors.
+- Frontend build validated: `vite build` completed in `5.58s` with 0 TypeScript errors.
+
+---
+
+## 4.5 Autoencoder & LSTM Autoencoder Production Milestones (Completed)
+
+### 1. Autoencoder (MLP Neural Reconstruction)
+- **Architecture:** 4-layer symmetrical bottleneck MLP (`F -> 64 -> 16 -> 64 -> F`) trained on normal transactions.
+- **Artifact:** `backend/ml/saved_models/autoencoder_v1.joblib`
+- **Benchmark Holdout Metrics (`synthetic_transactions_test.csv`):**
+  - **ROC-AUC:** `1.0000` | **PR-AUC:** `0.9999`
+  - **Precision:** `0.8909` (89.1%) | **Recall:** `1.0000` (100.0%) | **F1 Score:** `0.9423` (94.2%)
+  - **Key Gap Closed:** Raised `ROUND_NUMBER_DRAIN` catch rate from 26.7% to 100%.
+
+### 2. LSTM Autoencoder (Temporal Sequence Profiling)
+- **Architecture:** PyTorch Seq2Seq Bottleneck (`F -> LSTM(32) -> Linear(16) -> Repeat(10) -> LSTM(32) -> Linear(F)`).
+- **Artifact:** `backend/ml/saved_models/lstm_autoencoder_v1.joblib` (72.1 KB) + `lstm_autoencoder_v1_metrics.json`
+- **Benchmark Holdout Metrics (`synthetic_transactions_test.csv`):**
+  - **ROC-AUC:** `0.9743` | **PR-AUC:** `0.5511`
+  - **Precision:** `0.5286` (52.9%) | **Recall:** `0.7551` (75.5%) | **F1 Score:** `0.6218` (62.2%)
+  - **Key Gaps Closed:** 100% recall on `VELOCITY_BURST_SMURFING` (12/12) and `DISPROPORTIONATE_PER_STUDENT` (21/21).
+
+### 3. Weights & Scoring Ensemble Integration
+- **Weights Configuration:**
+  - Isolation Forest: `40%`
+  - Autoencoder (MLP): `30%`
+  - LSTM Temporal: `30%`
+- **Active Formula:** $\text{Composite} = 0.40 \cdot IF + 0.30 \cdot AE + 0.30 \cdot LSTM$
+- **UI Pages Updated:**
+  - `ModelPerformance.tsx`: Published verified holdout metrics on fleet cards, updated Live 3-Model Score & Weight Contribution Simulator in the "Weights & Scoring" tab with 40%/30%/30% weighting.
+  - `SystemSettings.tsx`: Activated 3-model ensemble sliders (IF 40%, AE 30%, LSTM 30%) with live normalization calculation and persistence.
+  - `IsolationForestTester.tsx`: Dedicated `LSTM Temporal` mode and 3-model `Ensemble` view.
+  - `TransactionMonitor.tsx`: Displays `IF Score` (40%), `AE Score` (30%), `LSTM Score` (30%), and `Composite Score`.
 
 ---
 
@@ -163,12 +196,12 @@ gantt
     Core REST API Endpoints           :done, 2026-06-01, 2026-09-25
     Synthetic Data & Isolation Forest :done, 2026-09-26, 2026-10-02
     Real-time Scoring API & Frontend  :done, 2026-10-16, 2026-10-29
-    Autoencoder Reconstruction Model   :active, 2026-10-30, 2026-11-12
-    LSTM Temporal Sequence Model      : 2026-11-13, 2026-11-25
-    Graph Neural Network              : 2026-11-26, 2026-12-05
+    Autoencoder Reconstruction Model   :done, 2026-10-30, 2026-11-11
+    LSTM Temporal Sequence Model      :done, 2026-11-11, 2026-11-11
+    Graph Neural Network              :active, 2026-11-12, 2026-11-25
     section Phase 3: Blockchain
-    Hyperledger Client & Anchoring    : 2026-12-06, 2026-12-18
-    Tamper Verification Service       : 2026-12-19, 2026-12-30
+    Hyperledger Client & Anchoring    : 2026-11-26, 2026-12-10
+    Tamper Verification Service       : 2026-12-11, 2026-12-24
 ```
 
 ### Immediate Sprint Objectives (Current Sprint)

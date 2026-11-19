@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router';
 import { Header } from '../components/Header';
 import { RiskBadge } from '../components/RiskBadge';
 import { StatusBadge } from '../components/StatusBadge';
@@ -25,6 +26,7 @@ interface Transaction {
 }
 
 export function TransactionMonitor() {
+  const navigate = useNavigate();
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stats, setStats] = useState({
@@ -45,7 +47,15 @@ export function TransactionMonitor() {
   const [search, setSearch] = useState('');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [actionLoading, setActionLoading] = useState(false);
-  const [liveIFMsg, setLiveIFMsg] = useState<{ score: number; tier: string; latency: number; reasons: string[] } | null>(null);
+  const [liveIFMsg, setLiveIFMsg] = useState<{
+    score: number;
+    aeScore?: number;
+    lstmScore?: number;
+    ensembleScore?: number;
+    tier: string;
+    latency: number;
+    reasons: string[];
+  } | null>(null);
 
   const handleTestLiveIF = async (txnId: string) => {
     try {
@@ -59,26 +69,50 @@ export function TransactionMonitor() {
         timestamp: selectedTx?.timestamp
       });
       if (res && res.inference) {
+        const aeScore = res.ae_inference?.anomaly_score;
+        const lstmScore = res.lstm_inference?.anomaly_score;
+        const ensembleScore = res.ensemble?.composite_score;
+        const tier = res.ensemble?.risk_tier || res.inference.risk_tier;
+        const combinedReasons = Array.from(
+          new Set<string>([
+            ...(res.lstm_inference?.reasons || []),
+            ...(res.ae_inference?.reasons || []),
+            ...(res.inference.reasons || []),
+          ])
+        );
+        const totalLatency = Number(
+          (
+            res.inference.latency_ms +
+            (res.ae_inference?.latency_ms || 0) +
+            (res.lstm_inference?.latency_ms || 0)
+          ).toFixed(2)
+        );
         setLiveIFMsg({
           score: res.inference.anomaly_score,
-          tier: res.inference.risk_tier,
-          latency: res.inference.latency_ms,
-          reasons: res.inference.reasons || []
+          aeScore,
+          lstmScore,
+          ensembleScore,
+          tier,
+          latency: totalLatency,
+          reasons: combinedReasons
         });
-        // Update local transaction score
+        // Update local transaction scores
         if (selectedTx) {
           setSelectedTx({
             ...selectedTx,
-            tier: res.inference.risk_tier,
+            mlScore: ensembleScore ?? selectedTx.mlScore,
+            tier,
             modelScores: {
               ...selectedTx.modelScores,
-              IF: res.inference.anomaly_score
+              IF: res.inference.anomaly_score,
+              ...(aeScore !== undefined ? { AE: aeScore } : {}),
+              ...(lstmScore !== undefined ? { LSTM: lstmScore } : {}),
             }
           });
         }
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to execute Isolation Forest inference.');
+      alert(err.message || 'Failed to execute live model inference.');
     } finally {
       setActionLoading(false);
     }
@@ -87,9 +121,11 @@ export function TransactionMonitor() {
   const handleInvestigate = async (txnId: string) => {
     try {
       setActionLoading(true);
-      await api.post(`/transactions/${txnId}/investigate`);
+      const res = await api.post<any>(`/transactions/${txnId}/investigate`);
       setRefreshTrigger(prev => prev + 1);
       setSelectedTx(null);
+      // Route directly to the newly created / linked case in Case Management
+      navigate('/cases');
     } catch (err: any) {
       alert(err.message || 'Failed to mark transaction for investigation.');
     } finally {
@@ -214,8 +250,8 @@ export function TransactionMonitor() {
             <table className="w-full">
               <thead className="bg-[#F4F6F9] border-b border-[#DDE1E7]">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
-                    Transaction ID
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wide w-12">
+                    #
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
                     Type
@@ -277,7 +313,7 @@ export function TransactionMonitor() {
                         setLiveIFMsg(null);
                       }}
                     >
-                      <td className="px-4 py-3 text-sm font-mono">{tx.id}</td>
+                      <td className="px-4 py-3 text-xs font-mono text-[#6B7280] font-medium">{index + 1}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-[#2471A3] text-white">
                           {tx.type}
@@ -364,7 +400,7 @@ export function TransactionMonitor() {
             <div className="sticky top-0 bg-white border-b border-[#DDE1E7] p-6 flex items-center justify-between">
               <div>
                 <h2 className="font-bold text-xl">Transaction Details</h2>
-                <p className="text-sm font-mono text-[#6B7280]">{selectedTx.id}</p>
+                <p className="text-sm font-medium text-[#6B7280]">{selectedTx.type} Disbursement</p>
               </div>
               <button onClick={() => setSelectedTx(null)} className="p-2 hover:bg-[#F4F6F9] rounded">
                 <X className="w-5 h-5" />
@@ -416,13 +452,13 @@ export function TransactionMonitor() {
               {/* Model scores */}
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-bold text-sm">Model Breakdown</h3>
+                  <h3 className="font-bold text-sm">Model Breakdown &amp; Weights</h3>
                   <button
                     onClick={() => handleTestLiveIF(selectedTx.id)}
                     disabled={actionLoading}
                     className="text-xs bg-[#1A3C5E] hover:bg-[#2E7D52] text-white px-2.5 py-1 rounded font-medium transition-colors cursor-pointer disabled:opacity-50"
                   >
-                    {actionLoading ? 'Scoring...' : 'Test with Isolation Forest'}
+                    {actionLoading ? 'Scoring...' : 'Run Live Models (IF + AE + LSTM)'}
                   </button>
                 </div>
 
@@ -432,8 +468,23 @@ export function TransactionMonitor() {
                       <span>Live Model Inference (joblib):</span>
                       <span className="font-mono">{liveIFMsg.latency} ms</span>
                     </div>
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="font-mono font-bold text-sm">Score: {liveIFMsg.score.toFixed(4)}</span>
+                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                      <span className="font-mono font-bold text-xs">IF: {liveIFMsg.score.toFixed(4)}</span>
+                      {liveIFMsg.aeScore !== undefined && (
+                        <span className="font-mono font-bold text-xs text-[#2471A3]">
+                          AE: {liveIFMsg.aeScore.toFixed(4)}
+                        </span>
+                      )}
+                      {liveIFMsg.lstmScore !== undefined && (
+                        <span className="font-mono font-bold text-xs text-[#8E44AD]">
+                          LSTM: {liveIFMsg.lstmScore.toFixed(4)}
+                        </span>
+                      )}
+                      {liveIFMsg.ensembleScore !== undefined && (
+                        <span className="font-mono font-bold text-xs text-[#2E7D52]">
+                          Composite: {liveIFMsg.ensembleScore.toFixed(4)}
+                        </span>
+                      )}
                       <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#1A3C5E] text-white">
                         {liveIFMsg.tier}
                       </span>
@@ -447,20 +498,36 @@ export function TransactionMonitor() {
                 )}
 
                 <div className="space-y-2">
-                  {Object.entries(selectedTx.modelScores).map(([model, score]) => (
-                    <div key={model}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-mono">{model}</span>
-                        <span className="text-sm font-mono">{score.toFixed(2)}</span>
+                  {Object.entries(selectedTx.modelScores)
+                    .filter(([model]) => model !== 'GNN')
+                    .map(([model, score]) => {
+                    const weightMap: Record<string, string> = {
+                      IF: '40%',
+                      AE: '30%',
+                      LSTM: '30%',
+                    };
+                    return (
+                      <div key={model}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-mono">{model}</span>
+                            {weightMap[model] && (
+                              <span className="text-[10px] font-mono bg-gray-100 text-[#475569] px-1.5 py-0.5 rounded">
+                                Weight: {weightMap[model]}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-sm font-mono">{score.toFixed(2)}</span>
+                        </div>
+                        <div className="w-full bg-[#F4F6F9] rounded-full h-2">
+                          <div
+                            className="bg-[#2471A3] h-2 rounded-full"
+                            style={{ width: `${score * 100}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="w-full bg-[#F4F6F9] rounded-full h-2">
-                        <div
-                          className="bg-[#2471A3] h-2 rounded-full"
-                          style={{ width: `${score * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 

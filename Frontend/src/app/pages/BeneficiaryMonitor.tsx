@@ -176,8 +176,8 @@ export function BeneficiaryMonitor() {
             <table className="w-full">
               <thead className="bg-[#F4F6F9] border-b border-[#DDE1E7]">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
-                    Student ID
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wide w-12">
+                    #
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
                     Name
@@ -233,7 +233,7 @@ export function BeneficiaryMonitor() {
                       }`}
                       onClick={() => setSelectedStudent(student)}
                     >
-                      <td className="px-4 py-3 text-sm font-mono">{student.id}</td>
+                      <td className="px-4 py-3 text-xs font-mono text-[#6B7280] font-medium">{index + 1}</td>
                       <td className="px-4 py-3 text-sm font-medium">{student.name}</td>
                       <td className="px-4 py-3 text-sm">{student.school}</td>
                       <td className="px-4 py-3 text-sm">{student.county}</td>
@@ -322,7 +322,7 @@ export function BeneficiaryMonitor() {
             <div className="sticky top-0 bg-white border-b border-[#DDE1E7] p-6 flex items-center justify-between">
               <div>
                 <h2 className="font-bold text-xl">Student Profile</h2>
-                <p className="text-sm font-mono text-[#6B7280]">{selectedStudent.id}</p>
+                <p className="text-sm font-medium text-[#6B7280]">{selectedStudent.name}</p>
               </div>
               <button
                 onClick={() => setSelectedStudent(null)}
@@ -342,8 +342,8 @@ export function BeneficiaryMonitor() {
                     <p className="font-medium">{selectedStudent.name}</p>
                   </div>
                   <div>
-                    <span className="text-[#6B7280]">Student ID:</span>
-                    <p className="font-mono">{selectedStudent.id}</p>
+                    <span className="text-[#6B7280]">Record Status:</span>
+                    <p className="font-medium text-[#1A3C5E]">Registered Beneficiary</p>
                   </div>
                   <div>
                     <span className="text-[#6B7280]">School:</span>
