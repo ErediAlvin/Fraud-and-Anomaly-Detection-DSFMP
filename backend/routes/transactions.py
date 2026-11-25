@@ -1,6 +1,8 @@
 import csv
 import io
 import json
+import math
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Union
@@ -311,13 +313,21 @@ async def batch_ingest_transactions(
 
 
 @router.get("")
+@router.get("/")
 async def get_transactions(
     type: Optional[str] = Query(None),
     tier: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(15, ge=1, le=15, description="Items per page, maximum 15"),
     db: AsyncSession = Depends(get_db)
 ):
-    # 1. Fetch Stats
+    # Enforce maximum 15 transactions per page
+    limit = min(max(1, limit), 15)
+    page = max(1, page)
+    offset = (page - 1) * limit
+
+    # 1. Fetch Stats (system-wide)
     stats_query = """
         SELECT 
             COUNT(*),
@@ -346,8 +356,42 @@ async def get_transactions(
         "falsePositiveRate": "3.8%"
     }
 
-    # 2. Fetch Transactions List
-    query_str = """
+    # 2. Build Filter Criteria
+    where_clauses = []
+    params: Dict[str, Any] = {}
+
+    if type and type != 'ALL':
+        type_map = {
+            "MPESA": "MPESA_PAYMENT",
+            "SUBSIDY": "SUBSIDY_DISBURSEMENT",
+            "PROCUREMENT": "SUPPLIER_PAYMENT"
+        }
+        db_type = type_map.get(type, type)
+        where_clauses.append("t.type = :db_type")
+        params["db_type"] = db_type
+        
+    if tier and tier != 'ALL':
+        where_clauses.append("t.risk_tier = :tier")
+        params["tier"] = tier
+        
+    if search:
+        where_clauses.append("(t.id LIKE :search OR t.reference_no LIKE :search OR t.description LIKE :search)")
+        params["search"] = f"%{search}%"
+
+    where_sql = ""
+    if where_clauses:
+        where_sql = " AND " + " AND ".join(where_clauses)
+
+    # 3. Count Total Filtered Transactions for Pagination
+    count_sql = f"SELECT COUNT(*) FROM transactions t WHERE 1=1{where_sql}"
+    count_res = await db.execute(text(count_sql), params)
+    filtered_total = count_res.scalar() or 0
+    total_pages = math.ceil(filtered_total / limit) if filtered_total > 0 else 1
+    has_next = page < total_pages
+    has_prev = page > 1
+
+    # 4. Fetch Paginated Transactions List (Max 15 per page)
+    query_str = f"""
         SELECT 
             t.id, 
             t.type, 
@@ -370,32 +414,12 @@ async def get_transactions(
             t.blockchain_hash,
             t.description
         FROM transactions t
-        WHERE 1=1
+        WHERE 1=1{where_sql}
+        ORDER BY t.transacted_at DESC
+        LIMIT :limit OFFSET :offset
     """
-    
-    params = {}
-    if type and type != 'ALL':
-        # Match database enum which has SUBSIDY_DISBURSEMENT, SUPPLIER_PAYMENT, PARENTAL_CONTRIBUTION, MPESA_PAYMENT, REFUND, ADJUSTMENT
-        type_map = {
-            "MPESA": "MPESA_PAYMENT",
-            "SUBSIDY": "SUBSIDY_DISBURSEMENT",
-            "PROCUREMENT": "SUPPLIER_PAYMENT"
-        }
-        db_type = type_map.get(type, type)
-        query_str += " AND t.type = :db_type"
-        params["db_type"] = db_type
-        
-    if tier and tier != 'ALL':
-        query_str += " AND t.risk_tier = :tier"
-        params["tier"] = tier
-        
-    if search:
-        query_str += " AND (t.id LIKE :search OR t.reference_no LIKE :search OR t.description LIKE :search)"
-        params["search"] = f"%{search}%"
-        
-    query_str += " ORDER BY t.transacted_at DESC"
-    
-    result = await db.execute(text(query_str), params)
+    data_params = {**params, "limit": limit, "offset": offset}
+    result = await db.execute(text(query_str), data_params)
     
     transactions = []
     for row in result.all():
@@ -447,9 +471,19 @@ async def get_transactions(
             "count": int(abs(40 - (i * 2))) + 5
         })
 
+    pagination = {
+        "page": page,
+        "limit": limit,
+        "total": filtered_total,
+        "total_pages": total_pages,
+        "has_next": has_next,
+        "has_prev": has_prev,
+    }
+
     return {
         "transactions": transactions,
         "stats": stats,
+        "pagination": pagination,
         "hourly_volume": hourly_volume,
         "amount_distribution": amount_distribution
     }
@@ -651,6 +685,25 @@ async def investigate_transaction(
             {"case_id": case_uuid, "alert_id": alert_uuid}
         )
 
+        # Dispatch notification to the specific investigator assigned to the case
+        if actor_id:
+            try:
+                await db.execute(
+                    text("""
+                        INSERT INTO notifications (id, user_id, type, title, message, link)
+                        VALUES (:nid, :uid, 'CASE_UPDATE', :title, :message, :link)
+                    """),
+                    {
+                        "nid": str(uuid.uuid4()),
+                        "uid": actor_id,
+                        "title": f"Investigation Opened: {case_number}",
+                        "message": f"Transaction {ref_display} (KES {amount_val:,.2f}) was escalated to your case queue.",
+                        "link": f"/cases?id={case_number}",
+                    },
+                )
+            except Exception as notif_err:
+                print(f"[WARN] Failed to dispatch transaction case notification: {notif_err}")
+
         # Audit Log
         try:
             await db.execute(
@@ -717,8 +770,14 @@ async def evaluate_transaction_isolation_forest(
             SELECT 
                 t.id, t.type, t.amount, t.payment_method, t.transacted_at,
                 COALESCE(s.enrollment_count, 500) as student_count,
-                (SELECT AVG(amount) FROM transactions WHERE school_id = t.school_id) as school_avg,
-                t.lstm_score, t.gnn_score
+                (
+                    SELECT AVG(amount)
+                    FROM transactions
+                    WHERE school_id = t.school_id
+                      AND status != 'FLAGGED'
+                      AND (risk_tier IS NULL OR risk_tier IN ('LOW', 'MEDIUM'))
+                ) as school_avg,
+                t.lstm_score, t.gnn_score, t.school_id
             FROM transactions t
             LEFT JOIN schools s ON s.id = t.school_id
             WHERE t.id = :txn_id
@@ -729,13 +788,18 @@ async def evaluate_transaction_isolation_forest(
         print(f"[INFO] DB query failed or unavailable ({db_err}); using payload/default parameters.")
 
     if db_txn:
+        amt_val = float(payload.get("amount", db_txn[2])) if payload and payload.get("amount") is not None else float(db_txn[2])
+        student_cnt = int(db_txn[5]) if db_txn[5] else 500
+        baseline_avg = float(db_txn[6]) if db_txn[6] else max(student_cnt * 120.0, 45000.0)
         txn_payload = {
-            "amount": float(db_txn[2]),
+            "amount": amt_val,
             "type": db_txn[1] or "SUPPLIER_PAYMENT",
             "payment_method": db_txn[3] or "BANK_TRANSFER",
             "transacted_at": db_txn[4].isoformat() if hasattr(db_txn[4], "isoformat") else str(db_txn[4] or ""),
-            "student_count": int(db_txn[5]) if db_txn[5] else 500,
-            "school_avg_amount": float(db_txn[6]) if db_txn[6] else float(db_txn[2])
+            "student_count": student_cnt,
+            "school_avg_amount": baseline_avg,
+            "rolling_24h_count": int(payload.get("rolling_24h_count", 1)) if payload else 1,
+            "rolling_24h_amount": float(payload.get("rolling_24h_amount", amt_val)) if payload else amt_val,
         }
     elif payload:
         p_type = payload.get("type", "SUPPLIER_PAYMENT")

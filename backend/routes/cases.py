@@ -889,10 +889,10 @@ async def assign_case(
     except Exception as e:
         print(f"[WARN] Failed to dispatch assignment notification to receiver: {e}")
 
-    # 2. Dispatch in-app notification to the assigner (Confirmation)
+    # 2. Dispatch in-app notification to the assigner (Confirmation) only if different from assignee
     notif_assigner = None
     try:
-        if actor_id:
+        if actor_id and actor_id != resolved_assignee_id:
             notif_uuid_asg = str(uuid.uuid4())
             asg_title = f"Case Assignment Confirmed: {case_number}"
             asg_msg = f"You assigned Case {case_number} ('{case['title']}') to {assignee_name}."

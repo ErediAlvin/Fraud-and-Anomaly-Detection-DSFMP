@@ -247,6 +247,7 @@ export function FraudAlerts() {
       }
 
       setEscalateModalOpen(false);
+      window.dispatchEvent(new CustomEvent('dsfmp_notification_refresh'));
       setToast({
         type: 'success',
         message: `Alert escalated to formal case ${res.case_ref}.`,

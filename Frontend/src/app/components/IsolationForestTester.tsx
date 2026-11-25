@@ -99,24 +99,33 @@ export interface ScoringWeights {
 
 interface TesterProps {
   weights?: ScoringWeights;
+  selectedModelId?: string;
+  onScoresUpdated?: (scores: {
+    ifScore: number;
+    aeScore: number;
+    lstmScore: number;
+    compositeScore: number;
+    activeModelId: ModelMode;
+    activeScore: number;
+  }) => void;
 }
 
-type ModelMode = 'ensemble' | 'autoencoder' | 'lstm' | 'isolation-forest';
+export type ModelMode = 'ensemble' | 'autoencoder' | 'lstm' | 'isolation-forest';
 
-export function IsolationForestTester({ weights }: TesterProps) {
+export function IsolationForestTester({ weights, selectedModelId, onScoresUpdated }: TesterProps) {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState<string>('normal_subsidy');
   const [modelMode, setModelMode] = useState<ModelMode>('ensemble');
   
   // Form State
-  const [amount, setAmount] = useState<number>(250000);
+  const [amount, setAmount] = useState<number>(248750);
   const [txType, setTxType] = useState<string>('SUBSIDY_DISBURSEMENT');
   const [paymentMethod, setPaymentMethod] = useState<string>('BANK_TRANSFER');
-  const [transactedAt, setTransactedAt] = useState<string>('2026-10-29T12:00:00');
+  const [transactedAt, setTransactedAt] = useState<string>('2026-10-29T12:15:00');
   const [studentCount, setStudentCount] = useState<number>(500);
   const [schoolAvgAmount, setSchoolAvgAmount] = useState<number>(240000);
   const [rolling24hCount, setRolling24hCount] = useState<number>(1);
-  const [rolling24hAmount, setRolling24hAmount] = useState<number>(250000);
+  const [rolling24hAmount, setRolling24hAmount] = useState<number>(248750);
   const [threshold, setThreshold] = useState<number>(0.70);
 
   // Execution State
@@ -125,7 +134,98 @@ export function IsolationForestTester({ weights }: TesterProps) {
   const [ensembleResult, setEnsembleResult] = useState<EnsembleInferenceResponse | null>(null);
   const [error, setError] = useState<string>('');
 
-  // Fetch presets on mount
+  const executeInference = async (
+    modeOverride?: ModelMode,
+    payloadOverride?: Preset['payload']
+  ) => {
+    const activeMode = modeOverride ?? modelMode;
+    const activeThreshold = Number(payloadOverride?.threshold ?? threshold);
+    const basePayload = {
+      amount: Number(payloadOverride?.amount ?? amount),
+      type: payloadOverride?.type ?? txType,
+      payment_method: payloadOverride?.payment_method ?? paymentMethod,
+      transacted_at: payloadOverride?.transacted_at ?? transactedAt,
+      student_count: Number(payloadOverride?.student_count ?? studentCount),
+      school_avg_amount: Number(payloadOverride?.school_avg_amount ?? schoolAvgAmount),
+      rolling_24h_count: Number(payloadOverride?.rolling_24h_count ?? rolling24hCount),
+      rolling_24h_amount: Number(payloadOverride?.rolling_24h_amount ?? rolling24hAmount),
+      threshold: activeThreshold,
+    };
+
+    setLoading(true);
+    setError('');
+    try {
+      const ensPromise = api.post<EnsembleInferenceResponse>('/models/ensemble/infer', {
+        ...basePayload,
+        if_threshold: activeMode === 'isolation-forest' ? activeThreshold : 0.65,
+        ae_threshold: activeMode === 'autoencoder' ? activeThreshold : 0.70,
+        lstm_threshold: activeMode === 'lstm' ? activeThreshold : 0.68,
+        ...(weights ? { weights } : {}),
+      });
+
+      if (activeMode === 'ensemble') {
+        const ensRes = await ensPromise;
+        setEnsembleResult(ensRes);
+        setResult(null);
+        onScoresUpdated?.({
+          ifScore: ensRes.isolation_forest?.anomaly_score ?? 0,
+          aeScore: ensRes.autoencoder?.anomaly_score ?? 0,
+          lstmScore: ensRes.lstm?.anomaly_score ?? 0,
+          compositeScore: ensRes.composite_score,
+          activeModelId: 'ensemble',
+          activeScore: ensRes.composite_score,
+        });
+      } else {
+        const endpoint =
+          activeMode === 'autoencoder'
+            ? '/models/autoencoder/infer'
+            : activeMode === 'lstm'
+            ? '/models/lstm/infer'
+            : '/models/isolation-forest/infer';
+        const [singleRes, ensRes] = await Promise.all([
+          api.post<InferenceResponse>(endpoint, basePayload),
+          ensPromise.catch(() => null),
+        ]);
+        setResult(singleRes);
+        setEnsembleResult(ensRes);
+        onScoresUpdated?.({
+          ifScore:
+            activeMode === 'isolation-forest'
+              ? singleRes.anomaly_score
+              : ensRes?.isolation_forest?.anomaly_score ?? singleRes.anomaly_score,
+          aeScore:
+            activeMode === 'autoencoder'
+              ? singleRes.anomaly_score
+              : ensRes?.autoencoder?.anomaly_score ?? singleRes.anomaly_score,
+          lstmScore:
+            activeMode === 'lstm'
+              ? singleRes.anomaly_score
+              : ensRes?.lstm?.anomaly_score ?? singleRes.anomaly_score,
+          compositeScore: ensRes?.composite_score ?? singleRes.anomaly_score,
+          activeModelId: activeMode,
+          activeScore: singleRes.anomaly_score,
+        });
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to execute inference.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Sync when parent selects a specific model card
+  useEffect(() => {
+    if (
+      selectedModelId === 'isolation-forest' ||
+      selectedModelId === 'autoencoder' ||
+      selectedModelId === 'lstm'
+    ) {
+      setModelMode(selectedModelId);
+      executeInference(selectedModelId);
+    }
+  }, [selectedModelId]);
+
+  // Fetch presets on mount and run initial inference so score bar is immediately populated
   useEffect(() => {
     async function loadPresets() {
       try {
@@ -133,7 +233,18 @@ export function IsolationForestTester({ weights }: TesterProps) {
         if (res && res.presets) {
           setPresets(res.presets);
           if (res.presets.length > 0) {
-            applyPreset(res.presets[0]);
+            const first = res.presets[0];
+            setSelectedPresetId(first.id);
+            setAmount(first.payload.amount);
+            setTxType(first.payload.type);
+            setPaymentMethod(first.payload.payment_method);
+            setTransactedAt(first.payload.transacted_at);
+            setStudentCount(first.payload.student_count);
+            setSchoolAvgAmount(first.payload.school_avg_amount);
+            setRolling24hCount(first.payload.rolling_24h_count);
+            setRolling24hAmount(first.payload.rolling_24h_amount);
+            setThreshold(first.payload.threshold || 0.70);
+            executeInference(modelMode, first.payload);
           }
         }
       } catch (err: any) {
@@ -154,53 +265,11 @@ export function IsolationForestTester({ weights }: TesterProps) {
     setRolling24hCount(preset.payload.rolling_24h_count);
     setRolling24hAmount(preset.payload.rolling_24h_amount);
     setThreshold(preset.payload.threshold || 0.70);
-    setResult(null);
-    setEnsembleResult(null);
-    setError('');
+    executeInference(modelMode, preset.payload);
   };
 
   const handleRunInference = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const basePayload = {
-        amount: Number(amount),
-        type: txType,
-        payment_method: paymentMethod,
-        transacted_at: transactedAt,
-        student_count: Number(studentCount),
-        school_avg_amount: Number(schoolAvgAmount),
-        rolling_24h_count: Number(rolling24hCount),
-        rolling_24h_amount: Number(rolling24hAmount),
-        threshold: Number(threshold)
-      };
-
-      if (modelMode === 'ensemble') {
-        const res = await api.post<EnsembleInferenceResponse>('/models/ensemble/infer', {
-          ...basePayload,
-          if_threshold: 0.65,
-          ae_threshold: 0.70,
-          lstm_threshold: Number(threshold),
-          ...(weights ? { weights } : {}),
-        });
-        setEnsembleResult(res);
-        setResult(null);
-      } else {
-        const endpoint =
-          modelMode === 'autoencoder'
-            ? '/models/autoencoder/infer'
-            : modelMode === 'lstm'
-            ? '/models/lstm/infer'
-            : '/models/isolation-forest/infer';
-        const res = await api.post<InferenceResponse>(endpoint, basePayload);
-        setResult(res);
-        setEnsembleResult(null);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to execute inference.');
-    } finally {
-      setLoading(false);
-    }
+    await executeInference(modelMode);
   };
 
   const getTierColor = (tier: string) => {
@@ -264,8 +333,7 @@ export function IsolationForestTester({ weights }: TesterProps) {
                 type="button"
                 onClick={() => {
                   setModelMode(opt.id);
-                  setResult(null);
-                  setEnsembleResult(null);
+                  executeInference(opt.id);
                 }}
                 className={`px-2.5 py-1.5 rounded font-semibold transition-all cursor-pointer ${
                   modelMode === opt.id
@@ -489,7 +557,7 @@ export function IsolationForestTester({ weights }: TesterProps) {
               </div>
             )}
 
-            {ensembleResult ? (
+            {modelMode === 'ensemble' && ensembleResult ? (
               <div className="bg-white border-2 border-[#1A3C5E] rounded-xl p-5 shadow-md flex-1 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
@@ -511,15 +579,20 @@ export function IsolationForestTester({ weights }: TesterProps) {
                       {ensembleResult.composite_score.toFixed(4)}
                     </div>
                     <div className="text-[11px] font-mono text-[#6B7280] mb-2">
-                      4-Model Raw Weighted Sum: {ensembleResult.raw_weighted_sum.toFixed(4)}
+                      3-Model Weighted Sum: {ensembleResult.raw_weighted_sum.toFixed(4)}
                     </div>
 
                     <div className="relative w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden">
                       <div
                         className={`h-3 rounded-full transition-all duration-500 ${
-                          ensembleResult.is_anomaly ? 'bg-[#C0392B]' : 'bg-[#2E7D52]'
+                          ensembleResult.composite_score >= threshold ? 'bg-[#C0392B]' : 'bg-[#2E7D52]'
                         }`}
                         style={{ width: `${Math.min(ensembleResult.composite_score * 100, 100)}%` }}
+                      />
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-[#1C1C1E] z-10"
+                        style={{ left: `${Math.min(Math.max(threshold * 100, 0), 100)}%` }}
+                        title={`Threshold τ = ${threshold.toFixed(2)}`}
                       />
                     </div>
 
@@ -675,9 +748,14 @@ export function IsolationForestTester({ weights }: TesterProps) {
                     <div className="relative w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden">
                       <div
                         className={`h-3 rounded-full transition-all duration-500 ${
-                          result.is_anomaly ? 'bg-[#C0392B]' : 'bg-[#2E7D52]'
+                          result.anomaly_score >= threshold ? 'bg-[#C0392B]' : 'bg-[#2E7D52]'
                         }`}
                         style={{ width: `${Math.min(result.anomaly_score * 100, 100)}%` }}
+                      />
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-[#1C1C1E] z-10"
+                        style={{ left: `${Math.min(Math.max(threshold * 100, 0), 100)}%` }}
+                        title={`Threshold τ = ${threshold.toFixed(2)}`}
                       />
                     </div>
 
@@ -688,12 +766,12 @@ export function IsolationForestTester({ weights }: TesterProps) {
                       </span>
                       <span
                         className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 ${
-                          result.is_anomaly
+                          result.anomaly_score >= threshold
                             ? 'bg-red-100 text-red-800 border border-red-300'
                             : 'bg-green-100 text-green-800 border border-green-300'
                         }`}
                       >
-                        {result.is_anomaly ? (
+                        {result.anomaly_score >= threshold ? (
                           <>
                             <ShieldAlert className="w-3.5 h-3.5" /> ANOMALY DETECTED
                           </>
@@ -705,6 +783,50 @@ export function IsolationForestTester({ weights }: TesterProps) {
                       </span>
                     </div>
                   </div>
+
+                  {/* Individual vs 3-Model Score Bars */}
+                  {ensembleResult && (
+                    <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3 mb-4">
+                      <div className="text-[11px] font-bold text-[#334155] uppercase tracking-wide mb-2">
+                        Individual Model Score vs. Peer Fleet Bars
+                      </div>
+                      <div className="space-y-2">
+                        {ensembleResult.breakdown.map((item) => {
+                          const isCurrent =
+                            (modelMode === 'isolation-forest' && item.id === 'if') ||
+                            (modelMode === 'autoencoder' && item.id === 'ae') ||
+                            (modelMode === 'lstm' && item.id === 'lstm');
+                          const barScore = isCurrent ? result.anomaly_score : item.score;
+                          return (
+                            <div key={item.id} className="text-xs">
+                              <div className="flex items-center justify-between mb-0.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`font-semibold ${isCurrent ? 'text-[#1A3C5E] underline' : 'text-[#1C1C1E]'}`}>
+                                    {item.name} {isCurrent ? '(Selected Test)' : ''}
+                                  </span>
+                                </div>
+                                <span className="font-mono text-[#1A3C5E] font-bold">
+                                  {barScore.toFixed(4)}
+                                </span>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                <div
+                                  className={`h-2 rounded-full transition-all duration-500 ${
+                                    isCurrent
+                                      ? barScore >= threshold
+                                        ? 'bg-[#C0392B]'
+                                        : 'bg-[#2E7D52]'
+                                      : 'bg-[#2471A3]'
+                                  }`}
+                                  style={{ width: `${Math.min(barScore * 100, 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {result.reconstruction_drivers && result.reconstruction_drivers.length > 0 && (
                     <div className="mb-4 bg-blue-50/70 border border-blue-200 rounded-lg p-3">

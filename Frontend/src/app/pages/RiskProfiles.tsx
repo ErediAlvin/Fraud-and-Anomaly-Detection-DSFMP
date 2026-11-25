@@ -141,8 +141,41 @@ export function RiskProfiles() {
     if (!selectedProfileId) return;
     try {
       setModalActionLoading(true);
-      await api.post(`/risk-profiles/${selectedProfileId}/recalculate`);
-      setActionSuccess('Composite risk score recalculated and refreshed');
+      const res = await api.post<any>(`/risk-profiles/${selectedProfileId}/recalculate`);
+      const updatedScore = typeof res?.riskScore === 'number' ? res.riskScore : undefined;
+      const updatedTier = res?.tier;
+      const updatedRadar = res?.radar;
+      const updatedLastScored = res?.lastScored;
+
+      if (updatedScore !== undefined) {
+        setProfiles((prev) =>
+          prev.map((p) =>
+            p.id === selectedProfileId
+              ? {
+                  ...p,
+                  riskScore: updatedScore,
+                  tier: updatedTier || p.tier,
+                  lastScored: updatedLastScored || p.lastScored,
+                }
+              : p
+          )
+        );
+        setDetailData((prev: any) =>
+          prev && prev.profile
+            ? {
+                ...prev,
+                profile: {
+                  ...prev.profile,
+                  riskScore: updatedScore,
+                  tier: updatedTier || prev.profile.tier,
+                  lastScored: updatedLastScored || prev.profile.lastScored,
+                },
+                radar: updatedRadar || prev.radar,
+              }
+            : prev
+        );
+      }
+      setActionSuccess(res?.message || 'Composite risk score recalculated and refreshed');
     } catch (err: any) {
       alert(err.message || 'Failed to recalculate score');
     } finally {

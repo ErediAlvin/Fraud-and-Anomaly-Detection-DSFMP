@@ -245,17 +245,17 @@ async def get_test_presets():
                 "name": "Normal Lunch Subsidy (Legitimate)",
                 "description": "Mid-day school subsidy disbursement with 500 students and normal historical ratio.",
                 "payload": {
-                    "amount": 250000.0,
+                    "amount": 248750.0,
                     "type": "SUBSIDY_DISBURSEMENT",
                     "payment_method": "BANK_TRANSFER",
                     "transacted_at": "2026-10-29T12:15:00",
                     "student_count": 500,
                     "school_avg_amount": 240000.0,
                     "rolling_24h_count": 1,
-                    "rolling_24h_amount": 250000.0,
+                    "rolling_24h_amount": 248750.0,
                     "threshold": 0.65
                 },
-                "expected_outcome": "LOW RISK (Score < 0.25)"
+                "expected_outcome": "LOW RISK (Score < 0.30)"
             },
             {
                 "id": "midnight_surge",

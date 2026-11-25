@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Bell, X, CheckCheck, Briefcase, ShieldAlert, Info, ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { api } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 
 interface HeaderProps {
   breadcrumbs?: string[];
@@ -22,28 +23,40 @@ interface InAppNotification {
 
 export function Header({ breadcrumbs = ['Dashboard'] }: HeaderProps) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
+    if (!user?.id) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
     try {
       setLoading(true);
       const res = await api.get<{ notifications: InAppNotification[]; unread_count: number }>(
-        '/notifications'
+        `/notifications?user_id=${encodeURIComponent(user.id)}`
       );
       if (res && Array.isArray(res.notifications)) {
-        setNotifications(res.notifications);
-        setUnreadCount(res.unread_count || 0);
+        // Filter strictly to the authenticated user's notifications
+        const userNotifs = res.notifications.filter((n) => !n.userId || n.userId === user.id);
+        setNotifications(userNotifs);
+        setUnreadCount(
+          typeof res.unread_count === 'number'
+            ? res.unread_count
+            : userNotifs.filter((n) => !n.isRead).length
+        );
       }
     } catch (e) {
       // Graceful fallback
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
 
   useEffect(() => {
     fetchNotifications();
@@ -60,7 +73,7 @@ export function Header({ breadcrumbs = ['Dashboard'] }: HeaderProps) {
       window.removeEventListener('dsfmp_notification_refresh', handleRefresh);
       clearInterval(interval);
     };
-  }, []);
+  }, [fetchNotifications]);
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -78,8 +91,9 @@ export function Header({ breadcrumbs = ['Dashboard'] }: HeaderProps) {
   }, [isOpen]);
 
   const handleMarkAllRead = async () => {
+    if (!user?.id) return;
     try {
-      await api.patch('/notifications/mark-read');
+      await api.patch(`/notifications/mark-read?user_id=${encodeURIComponent(user.id)}`);
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
       setUnreadCount(0);
     } catch (e) {
@@ -90,7 +104,8 @@ export function Header({ breadcrumbs = ['Dashboard'] }: HeaderProps) {
   const handleItemClick = async (notif: InAppNotification) => {
     if (!notif.isRead) {
       try {
-        await api.patch(`/notifications/${notif.id}/read`);
+        const query = user?.id ? `?user_id=${encodeURIComponent(user.id)}` : '';
+        await api.patch(`/notifications/${notif.id}/read${query}`);
         setNotifications((prev) =>
           prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n))
         );
@@ -149,12 +164,19 @@ export function Header({ breadcrumbs = ['Dashboard'] }: HeaderProps) {
           {isOpen && (
             <div className="absolute right-0 top-12 w-96 bg-white rounded-xl shadow-2xl border border-[#DDE1E7] overflow-hidden animate-in fade-in zoom-in-95 duration-150 z-50">
               <div className="p-4 bg-[#F8FAFC] border-b border-[#DDE1E7] flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-sm text-[#1C1C1E]">Notifications</h3>
-                  {unreadCount > 0 && (
-                    <span className="text-[10px] font-bold bg-[#C0392B] text-white px-1.5 py-0.5 rounded-full">
-                      {unreadCount} new
-                    </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-sm text-[#1C1C1E]">My Notifications</h3>
+                    {unreadCount > 0 && (
+                      <span className="text-[10px] font-bold bg-[#C0392B] text-white px-1.5 py-0.5 rounded-full">
+                        {unreadCount} new
+                      </span>
+                    )}
+                  </div>
+                  {user && (
+                    <p className="text-[11px] text-[#6B7280] mt-0.5 truncate">
+                      {user.firstName} {user.lastName} ({user.email})
+                    </p>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -178,9 +200,9 @@ export function Header({ breadcrumbs = ['Dashboard'] }: HeaderProps) {
 
               <div className="max-h-[380px] overflow-y-auto divide-y divide-gray-100">
                 {loading && notifications.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-[#6B7280]">Loading notifications...</div>
+                  <div className="p-8 text-center text-xs text-[#6B7280]">Loading your notifications...</div>
                 ) : notifications.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-[#6B7280]">No notifications recorded.</div>
+                  <div className="p-8 text-center text-xs text-[#6B7280]">No notifications for your account.</div>
                 ) : (
                   notifications.map((n) => (
                     <div
@@ -207,7 +229,7 @@ export function Header({ breadcrumbs = ['Dashboard'] }: HeaderProps) {
                         </p>
                         <div className="flex items-center justify-between text-[10px] text-[#9CA3AF] font-mono">
                           <span className="bg-gray-100 px-1.5 py-0.5 rounded text-gray-700">
-                            To: {n.recipientName}
+                            {n.type.replace(/_/g, ' ')}
                           </span>
                           <span>{n.createdAt}</span>
                         </div>

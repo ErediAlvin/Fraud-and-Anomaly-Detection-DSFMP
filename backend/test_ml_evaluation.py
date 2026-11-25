@@ -1,4 +1,11 @@
+import os
+import sys
 import unittest
+
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
 from ml.training.evaluate import metrics
 
 class EvaluationTests(unittest.TestCase):
@@ -16,3 +23,8 @@ class EvaluationTests(unittest.TestCase):
         for labels, scores in [([], []), ([1], [float('nan')]), ([2], [.5])]:
             with self.assertRaises(ValueError):
                 metrics(labels, scores, .5)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

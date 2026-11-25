@@ -28,7 +28,6 @@ const navItems = [
   { path: '/beneficiaries', icon: Users, label: 'Beneficiary Monitor' },
   { path: '/transactions', icon: CreditCard, label: 'Transaction Monitor' },
   { path: '/supply-chain', icon: Package, label: 'Supply Chain Monitor' },
-  { path: '/blockchain', icon: Database, label: 'Blockchain Ledger' },
   { path: '/risk-profiles', icon: Shield, label: 'Risk Profiles' },
   { path: '/reports', icon: FileText, label: 'Reports & Analytics' },
   { path: '/model-performance', icon: Activity, label: 'Model Performance' },
@@ -153,28 +152,41 @@ export function Sidebar() {
 
       {/* User Section & Pop-out Menu */}
       <div className="p-4 border-t border-white/10 relative">
-        {/* The Clickable User Info Bar */}
-        <button
-          ref={userButtonRef}
-          type="button"
-          onClick={() => setIsMenuOpen((prev) => !prev)}
-          className={`w-full flex items-center gap-3 p-1.5 -m-1.5 rounded-lg hover:bg-white/10 transition-all cursor-pointer text-left focus:outline-hidden ${
-            collapsed ? 'justify-center' : ''
-          } ${isMenuOpen ? 'bg-white/15 ring-2 ring-white/20' : ''}`}
-          title="Click to view account and log out"
-          aria-expanded={isMenuOpen}
-          aria-haspopup="true"
-        >
-          <div className="w-8 h-8 rounded-full bg-[#2E7D52] flex-shrink-0 flex items-center justify-center text-sm font-bold shadow-xs">
-            {initials}
-          </div>
-          {!collapsed && (
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate text-white leading-tight">{displayName}</p>
-              <p className="text-xs text-white/70 truncate mt-0.5">{roleLabel}</p>
+        <div className={`flex items-center gap-2 ${collapsed ? 'flex-col' : ''}`}>
+          {/* The Clickable User Info Bar */}
+          <button
+            ref={userButtonRef}
+            type="button"
+            onClick={() => setIsMenuOpen((prev) => !prev)}
+            className={`flex-1 min-w-0 flex items-center gap-3 p-1.5 -m-1.5 rounded-lg hover:bg-white/10 transition-all cursor-pointer text-left focus:outline-hidden ${
+              collapsed ? 'justify-center' : ''
+            } ${isMenuOpen ? 'bg-white/15 ring-2 ring-white/20' : ''}`}
+            title="Click to view account details"
+            aria-expanded={isMenuOpen}
+            aria-haspopup="true"
+          >
+            <div className="w-8 h-8 rounded-full bg-[#2E7D52] flex-shrink-0 flex items-center justify-center text-sm font-bold shadow-xs">
+              {initials}
             </div>
-          )}
-        </button>
+            {!collapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate text-white leading-tight">{displayName}</p>
+                <p className="text-xs text-white/70 truncate mt-0.5">{roleLabel}</p>
+              </div>
+            )}
+          </button>
+
+          {/* Direct One-Click Logout Button on Sidebar Footer */}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="p-2 rounded-lg text-white/80 hover:text-white hover:bg-red-500/25 transition-colors cursor-pointer flex-shrink-0"
+            title="Log out"
+            aria-label="Log out"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
 
         {/* Pop-out Dropdown Menu */}
         {isMenuOpen && (
@@ -218,6 +230,11 @@ export function Sidebar() {
             {/* Action Buttons */}
             <div className="pt-2 border-t border-gray-100">
               <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  handleLogout();
+                }}
                 onClick={handleLogout}
                 className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-red-600 bg-red-50/80 hover:bg-red-100 hover:text-red-700 rounded-lg transition-colors cursor-pointer active:scale-98"
               >
