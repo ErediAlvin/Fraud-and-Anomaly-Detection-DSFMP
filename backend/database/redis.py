@@ -8,6 +8,7 @@ Provides an async Redis client for:
 - Rate limiting
 """
 
+import time
 from redis.asyncio import Redis, ConnectionPool
 
 from config.settings import settings
@@ -17,32 +18,32 @@ from config.settings import settings
 # Shared pool created once at import time; actual connections
 # are established lazily on first use.
 _pool: ConnectionPool | None = None
+_redis_down_until: float = 0.0
 
 
 async def get_redis() -> Redis | None:
     """
     Create or return the async Redis client.
-    Returns None if Redis is not available (graceful degradation).
-
-    Usage as a FastAPI dependency:
-        @router.get("/cached")
-        async def cached_data(redis: Redis = Depends(get_redis)):
-            if redis is None:
-                # fallback logic
-            ...
+    Returns None immediately if Redis is not available (graceful degradation).
     """
-    global _pool
+    global _pool, _redis_down_until
+    now = time.monotonic()
+    if now < _redis_down_until:
+        return None
     try:
         if _pool is None:
             _pool = ConnectionPool.from_url(
                 settings.redis_url,
                 max_connections=20,
-                decode_responses=True,   # Return strings instead of bytes
+                decode_responses=True,
+                socket_connect_timeout=0.25,
+                socket_timeout=0.25,
             )
         client = Redis(connection_pool=_pool)
         await client.ping()  # Verify connection is alive
         return client
     except Exception:
+        _redis_down_until = now + 60.0
         return None
 
 

@@ -57,12 +57,15 @@ class TestIngestionPipelineIntegration(unittest.IsolatedAsyncioTestCase):
         # Clean up test school and all associated records
         try:
             async with async_session_factory() as db:
-                await db.execute(text("DELETE FROM fraud_alerts WHERE school_id = :sid"), {"sid": self.test_school_id})
+                await db.execute(
+                    text("DELETE FROM fraud_alerts WHERE entity_id IN (SELECT id FROM transactions WHERE school_id = :sid) OR entity_id = :sid"),
+                    {"sid": self.test_school_id},
+                )
                 await db.execute(text("DELETE FROM transactions WHERE school_id = :sid"), {"sid": self.test_school_id})
                 await db.execute(text("DELETE FROM schools WHERE id = :sid"), {"sid": self.test_school_id})
                 await db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARN] TearDown cleanup error: {e}")
 
         await self.client.aclose()
         await engine.dispose()

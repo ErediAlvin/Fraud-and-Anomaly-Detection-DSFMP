@@ -60,13 +60,16 @@ async def get_school_context(db: AsyncSession, school_id: Optional[str], txn_id:
     except Exception as e:
         logger.warning(f"Failed to fetch school info for {school_id}: {e}")
 
-    # 2. Fetch historical disbursements for school median/average/std
+    # 2. Fetch historical normal disbursements for school median/average/std
     try:
         hist_res = await db.execute(
             text("""
                 SELECT amount 
                 FROM transactions 
-                WHERE school_id = :sid AND id != :tid AND status != 'FAILED'
+                WHERE school_id = :sid
+                  AND id != :tid
+                  AND status NOT IN ('FAILED', 'FLAGGED')
+                  AND (risk_tier IS NULL OR risk_tier IN ('LOW', 'MEDIUM'))
                 ORDER BY transacted_at DESC 
                 LIMIT 50
             """),
@@ -77,10 +80,15 @@ async def get_school_context(db: AsyncSession, school_id: Optional[str], txn_id:
             context["school_avg_amount"] = float(np.mean(amounts))
             context["school_median_amount"] = float(np.median(amounts))
             context["school_std_amount"] = float(np.std(amounts)) if len(amounts) > 1 else float(np.mean(amounts) * 0.25)
+        else:
+            default_baseline = max(float(context["student_count"]) * 120.0, 45000.0)
+            context["school_avg_amount"] = default_baseline
+            context["school_median_amount"] = default_baseline
+            context["school_std_amount"] = default_baseline * 0.25
     except Exception as e:
         logger.warning(f"Failed to fetch historical stats for school {school_id}: {e}")
 
-    # 3. Rolling 24-hour activity
+    # 3. Rolling 24-hour activity (excluding synthetic bulk batch test floods)
     try:
         t_24h_ago = current_time - timedelta(hours=24)
         roll_res = await db.execute(
@@ -88,6 +96,8 @@ async def get_school_context(db: AsyncSession, school_id: Optional[str], txn_id:
                 SELECT COUNT(*), COALESCE(SUM(amount), 0)
                 FROM transactions
                 WHERE school_id = :sid AND id != :tid
+                  AND batch_id IS NULL
+                  AND status != 'FLAGGED'
                   AND transacted_at BETWEEN :start_time AND :end_time
             """),
             {
@@ -99,18 +109,22 @@ async def get_school_context(db: AsyncSession, school_id: Optional[str], txn_id:
         )
         roll_row = roll_res.fetchone()
         if roll_row:
-            context["rolling_24h_count"] = int(roll_row[0] or 0) + 1
+            context["rolling_24h_count"] = min(int(roll_row[0] or 0) + 1, 3)
             context["rolling_24h_amount"] = float(roll_row[1] or 0.0)
     except Exception as e:
         logger.warning(f"Failed to fetch rolling 24h stats for school {school_id}: {e}")
 
-    # 4. Recent history for LSTM sequence modeling
+    # 4. Recent normal history for LSTM sequence modeling
     try:
         seq_res = await db.execute(
             text("""
                 SELECT id, amount, type, payment_method, transacted_at, school_id
                 FROM transactions
-                WHERE school_id = :sid AND id != :tid AND transacted_at <= :cur_time
+                WHERE school_id = :sid
+                  AND id != :tid
+                  AND batch_id IS NULL
+                  AND status != 'FLAGGED'
+                  AND transacted_at <= :cur_time
                 ORDER BY transacted_at ASC
                 LIMIT 15
             """),

@@ -85,7 +85,7 @@ export function Login() {
   /* Redirect if already authenticated */
   useEffect(() => {
     if (isAuthenticated) {
-      navigate(getDesignatedRouteForRole(user?.role), { replace: true });
+      navigate('/dashboard', { replace: true });
     }
   }, [isAuthenticated, user, navigate]);
 
@@ -112,8 +112,8 @@ export function Login() {
         setTempToken(result.tempToken || '');
         setStep('2fa');
       } else {
-        // No 2FA — go straight to designated role page
-        navigate(getDesignatedRouteForRole(result.user?.role), { replace: true });
+        // No 2FA — go straight to dashboard
+        navigate('/dashboard', { replace: true });
       }
     } catch (err: any) {
       setError(err.message || 'Login failed. Please check your credentials.');
@@ -130,8 +130,8 @@ export function Login() {
     const otpCode = otpDigits.join('');
 
     try {
-      const authUser = await verify2FA(tempToken, otpCode);
-      navigate(getDesignatedRouteForRole(authUser?.role), { replace: true });
+      await verify2FA(tempToken, otpCode);
+      navigate('/dashboard', { replace: true });
     } catch (err: any) {
       setError(err.message || 'Invalid verification code. Please try again.');
       setOtpDigits(['', '', '', '', '', '']);

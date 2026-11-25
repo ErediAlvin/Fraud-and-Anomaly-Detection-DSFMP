@@ -33,21 +33,8 @@ export interface AuthUser {
   twoFaEnabled: boolean;
 }
 
-export function getDesignatedRouteForRole(role?: string): string {
-  switch (role) {
-    case 'fraud_analyst':
-      return '/alerts';
-    case 'supervisor':
-      return '/cases';
-    case 'county_officer':
-      return '/beneficiaries';
-    case 'school_admin':
-      return '/procedures';
-    case 'system_admin':
-      return '/settings';
-    default:
-      return '/dashboard';
-  }
+export function getDesignatedRouteForRole(_role?: string): string {
+  return '/dashboard';
 }
 
 interface LoginPayload {
@@ -158,14 +145,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── Logout ──
   const logout = useCallback(async () => {
-    try {
-      await api.post('/auth/logout');
-    } catch {
-      // Even if server-side logout fails, clear locally
-    }
-    setUser(null);
+    const tokens = getStoredTokens();
+    // 1. Clear local session state & storage immediately so UI transitions to /login without delay
     clearTokens();
     localStorage.removeItem('dsfmp_user');
+    setUser(null);
+
+    // 2. Notify backend in the background (non-blocking) to blacklist the token if Redis is active
+    if (tokens?.accessToken) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokens.accessToken}`,
+        },
+      }).catch(() => {
+        // Ignore network/server errors during background token revocation
+      });
+    }
   }, []);
 
   return (

@@ -4,9 +4,35 @@ import { Header } from '../components/Header';
 import { RiskBadge } from '../components/RiskBadge';
 import { StatusBadge } from '../components/StatusBadge';
 import { StatCard } from '../components/StatCard';
-import { CreditCard, DollarSign, ShieldAlert, Lock, X, CheckCircle } from 'lucide-react';
+import {
+  CreditCard,
+  DollarSign,
+  ShieldAlert,
+  Lock,
+  X,
+  CheckCircle,
+  Plus,
+  Zap,
+  AlertTriangle,
+  Activity,
+  Loader2,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { api } from '../lib/api';
+
+interface PaginationMetadata {
+  page: number;
+  limit: number;
+  total: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+}
 
 interface Transaction {
   id: string;
@@ -14,7 +40,7 @@ interface Transaction {
   payer: string;
   recipient: string;
   amount: number;
-  tier: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  tier: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'EVALUATING';
   mlScore: number;
   blockchainStatus: 'VERIFIED' | 'PENDING' | 'FAILED';
   smartContractStatus: 'PASSED' | 'BLOCKED';
@@ -45,6 +71,15 @@ export function TransactionMonitor() {
     tier: 'ALL',
   });
   const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pagination, setPagination] = useState<PaginationMetadata>({
+    page: 1,
+    limit: 15,
+    total: 0,
+    total_pages: 1,
+    has_next: false,
+    has_prev: false,
+  });
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [actionLoading, setActionLoading] = useState(false);
   const [liveIFMsg, setLiveIFMsg] = useState<{
@@ -56,6 +91,137 @@ export function TransactionMonitor() {
     latency: number;
     reasons: string[];
   } | null>(null);
+
+  // Ingestion Modal States
+  const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
+  const [availableSchools, setAvailableSchools] = useState<{ id: string; name: string; nemis?: string; enrollment: number }[]>([]);
+  const [ingestForm, setIngestForm] = useState({
+    school_id: '',
+    amount: '48750',
+    type: 'SUBSIDY',
+    payment_method: 'BANK_TRANSFER',
+    transacted_at: new Date().toISOString().slice(0, 16),
+    description: 'Routine term porridge subsidy grant disbursement',
+    reference_no: '',
+  });
+  const [ingestStatus, setIngestStatus] = useState<'IDLE' | 'QUEUED' | 'EVALUATING' | 'SCORED' | 'ERROR'>('IDLE');
+  const [ingestResult, setIngestResult] = useState<any>(null);
+  const [ingestError, setIngestError] = useState('');
+
+  // Fetch schools context for ingestion selection
+  useEffect(() => {
+    async function fetchSchools() {
+      try {
+        const schools = await api.get<any[]>('/transactions/context/schools');
+        if (schools && schools.length > 0) {
+          setAvailableSchools(schools);
+          setIngestForm(prev => ({ ...prev, school_id: prev.school_id || schools[0].id }));
+        }
+      } catch (e) {
+        console.warn('Failed to load schools for ingestion modal:', e);
+      }
+    }
+    fetchSchools();
+  }, []);
+
+  const applyPreset = (presetName: 'NORMAL' | 'SURGE' | 'GHOST') => {
+    const defaultSchool = availableSchools[0]?.id || '';
+    const now = new Date();
+    if (presetName === 'NORMAL') {
+      now.setHours(10, 30, 0, 0);
+      setIngestForm({
+        school_id: defaultSchool,
+        amount: '48750',
+        type: 'SUBSIDY',
+        payment_method: 'BANK_TRANSFER',
+        transacted_at: now.toISOString().slice(0, 16),
+        description: 'Routine term porridge subsidy grant disbursement',
+        reference_no: `NORM-${Date.now().toString().slice(-6)}`,
+      });
+    } else if (presetName === 'SURGE') {
+      const midnight = new Date();
+      midnight.setHours(2, 30, 0, 0);
+      setIngestForm({
+        school_id: availableSchools[1]?.id || defaultSchool,
+        amount: '2000000',
+        type: 'SUBSIDY',
+        payment_method: 'BANK_TRANSFER',
+        transacted_at: midnight.toISOString().slice(0, 16),
+        description: 'Suspicious midnight off-hours county treasury transfer',
+        reference_no: `SURGE-${Date.now().toString().slice(-6)}`,
+      });
+    } else if (presetName === 'GHOST') {
+      now.setHours(11, 45, 0, 0);
+      setIngestForm({
+        school_id: availableSchools[2]?.id || defaultSchool,
+        amount: '980000',
+        type: 'PROCUREMENT',
+        payment_method: 'BANK_TRANSFER',
+        transacted_at: now.toISOString().slice(0, 16),
+        description: 'Inflated food distribution invoice exceeding student count baseline',
+        reference_no: `GHOST-${Date.now().toString().slice(-6)}`,
+      });
+    }
+    setIngestStatus('IDLE');
+    setIngestResult(null);
+    setIngestError('');
+  };
+
+  const handleSimulateIngest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setIngestStatus('QUEUED');
+      setIngestError('');
+      setIngestResult(null);
+
+      const payload = {
+        school_id: ingestForm.school_id || availableSchools[0]?.id,
+        amount: parseFloat(ingestForm.amount),
+        type: ingestForm.type,
+        payment_method: ingestForm.payment_method,
+        transacted_at: ingestForm.transacted_at ? new Date(ingestForm.transacted_at).toISOString() : undefined,
+        description: ingestForm.description,
+        reference_no: ingestForm.reference_no || undefined,
+      };
+
+      const res = await api.post<any>('/transactions', payload);
+      const txnId = res.transaction_id;
+      setIngestStatus('EVALUATING');
+
+      // Refresh table immediately so newly queued transaction appears in EVALUATING state
+      setRefreshTrigger(prev => prev + 1);
+
+      // Poll for 3-model background scoring completion
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const checkRes = await api.get<any>(`/transactions/${txnId}`);
+          if (checkRes && checkRes.risk_tier !== 'EVALUATING') {
+            clearInterval(interval);
+            setIngestStatus('SCORED');
+            setIngestResult(checkRes);
+            // Refresh table & KPI stats
+            setRefreshTrigger(prev => prev + 1);
+          } else if (attempts >= 15) {
+            clearInterval(interval);
+            setIngestStatus('SCORED');
+            setIngestResult(checkRes);
+            setRefreshTrigger(prev => prev + 1);
+          }
+        } catch (pollErr) {
+          if (attempts >= 10) {
+            clearInterval(interval);
+            setIngestStatus('ERROR');
+            setIngestError('Timed out polling transaction anomaly score.');
+          }
+        }
+      }, 700);
+    } catch (err: any) {
+      setIngestStatus('ERROR');
+      setIngestError(err.message || 'Failed to ingest transaction');
+    }
+  };
 
   const handleTestLiveIF = async (txnId: string) => {
     try {
@@ -69,10 +235,35 @@ export function TransactionMonitor() {
         timestamp: selectedTx?.timestamp
       });
       if (res && res.inference) {
-        const aeScore = res.ae_inference?.anomaly_score;
-        const lstmScore = res.lstm_inference?.anomaly_score;
-        const ensembleScore = res.ensemble?.composite_score;
-        const tier = res.ensemble?.risk_tier || res.inference.risk_tier;
+        const ifScore = Number(res.inference.anomaly_score ?? 0);
+        const aeScore =
+          res.ae_inference?.anomaly_score !== undefined
+            ? Number(res.ae_inference.anomaly_score)
+            : selectedTx?.modelScores?.AE;
+        const lstmScore =
+          res.lstm_inference?.anomaly_score !== undefined
+            ? Number(res.lstm_inference.anomaly_score)
+            : selectedTx?.modelScores?.LSTM;
+        const fallbackComposite = Number(
+          (
+            0.4 * ifScore +
+            0.3 * (aeScore ?? ifScore) +
+            0.3 * (lstmScore ?? ifScore)
+          ).toFixed(4)
+        );
+        const ensembleScore =
+          res.ensemble?.composite_score !== undefined
+            ? Number(res.ensemble.composite_score)
+            : fallbackComposite;
+        const tier =
+          res.ensemble?.risk_tier ||
+          (ensembleScore >= 0.8
+            ? 'CRITICAL'
+            : ensembleScore >= 0.6
+            ? 'HIGH'
+            : ensembleScore >= 0.4
+            ? 'MEDIUM'
+            : 'LOW');
         const combinedReasons = Array.from(
           new Set<string>([
             ...(res.lstm_inference?.reasons || []),
@@ -88,7 +279,7 @@ export function TransactionMonitor() {
           ).toFixed(2)
         );
         setLiveIFMsg({
-          score: res.inference.anomaly_score,
+          score: ifScore,
           aeScore,
           lstmScore,
           ensembleScore,
@@ -96,20 +287,38 @@ export function TransactionMonitor() {
           latency: totalLatency,
           reasons: combinedReasons
         });
-        // Update local transaction scores
-        if (selectedTx) {
-          setSelectedTx({
-            ...selectedTx,
-            mlScore: ensembleScore ?? selectedTx.mlScore,
+        // Update both the open drawer state and the main transactions table row so all score bars animate immediately
+        setSelectedTx(prev => {
+          if (!prev || prev.id !== txnId) return prev;
+          return {
+            ...prev,
+            mlScore: ensembleScore,
             tier,
             modelScores: {
-              ...selectedTx.modelScores,
-              IF: res.inference.anomaly_score,
+              ...prev.modelScores,
+              IF: ifScore,
               ...(aeScore !== undefined ? { AE: aeScore } : {}),
               ...(lstmScore !== undefined ? { LSTM: lstmScore } : {}),
             }
-          });
-        }
+          };
+        });
+        setTransactions(prev =>
+          prev.map(tx =>
+            tx.id === txnId
+              ? {
+                  ...tx,
+                  mlScore: ensembleScore,
+                  tier,
+                  modelScores: {
+                    ...tx.modelScores,
+                    IF: ifScore,
+                    ...(aeScore !== undefined ? { AE: aeScore } : {}),
+                    ...(lstmScore !== undefined ? { LSTM: lstmScore } : {}),
+                  },
+                }
+              : tx
+          )
+        );
       }
     } catch (err: any) {
       alert(err.message || 'Failed to execute live model inference.');
@@ -122,6 +331,7 @@ export function TransactionMonitor() {
     try {
       setActionLoading(true);
       const res = await api.post<any>(`/transactions/${txnId}/investigate`);
+      window.dispatchEvent(new CustomEvent('dsfmp_notification_refresh'));
       setRefreshTrigger(prev => prev + 1);
       setSelectedTx(null);
       // Route directly to the newly created / linked case in Case Management
@@ -155,10 +365,25 @@ export function TransactionMonitor() {
         if (filters.type !== 'ALL') params.append('type', filters.type);
         if (filters.tier !== 'ALL') params.append('tier', filters.tier);
         if (search) params.append('search', search);
+        params.append('page', currentPage.toString());
+        params.append('limit', '15');
 
         const res = await api.get<any>(`/transactions?${params.toString()}`);
         if (isMounted) {
-          setTransactions(res.transactions);
+          setTransactions(res.transactions || []);
+          if (res.pagination) {
+            setPagination(res.pagination);
+          } else {
+            const total = res.transactions?.length || 0;
+            setPagination({
+              page: currentPage,
+              limit: 15,
+              total,
+              total_pages: Math.max(1, Math.ceil(total / 15)),
+              has_next: false,
+              has_prev: false,
+            });
+          }
           setStats(res.stats);
           setHourlyVolume(res.hourly_volume);
           setAmountDistribution(res.amount_distribution);
@@ -181,7 +406,7 @@ export function TransactionMonitor() {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [filters, search, refreshTrigger]);
+  }, [filters, search, currentPage, refreshTrigger]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -205,7 +430,10 @@ export function TransactionMonitor() {
               <select
                 className="border border-[#DDE1E7] rounded px-3 py-1.5 text-sm"
                 value={filters.type}
-                onChange={(e) => setFilters({ ...filters, type: e.target.value })}
+                onChange={(e) => {
+                  setFilters({ ...filters, type: e.target.value });
+                  setCurrentPage(1);
+                }}
               >
                 <option value="ALL">All Types</option>
                 <option value="MPESA">M-Pesa</option>
@@ -220,7 +448,10 @@ export function TransactionMonitor() {
               <select
                 className="border border-[#DDE1E7] rounded px-3 py-1.5 text-sm"
                 value={filters.tier}
-                onChange={(e) => setFilters({ ...filters, tier: e.target.value })}
+                onChange={(e) => {
+                  setFilters({ ...filters, tier: e.target.value });
+                  setCurrentPage(1);
+                }}
               >
                 <option value="ALL">All Tiers</option>
                 <option value="CRITICAL">CRITICAL</option>
@@ -232,14 +463,30 @@ export function TransactionMonitor() {
 
             <div className="flex-1"></div>
 
-            <div className="self-end">
+            <div className="flex items-center gap-3 self-end">
               <input
                 type="text"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setCurrentPage(1);
+                }}
                 placeholder="Search by transaction ID..."
                 className="border border-[#DDE1E7] rounded px-3 py-1.5 text-sm w-64"
               />
+              <button
+                type="button"
+                onClick={() => {
+                  setIsIngestModalOpen(true);
+                  setIngestStatus('IDLE');
+                  setIngestResult(null);
+                  setIngestError('');
+                }}
+                className="flex items-center gap-1.5 bg-[#1A3C5E] hover:bg-[#2E7D52] text-white px-3.5 py-1.5 rounded text-sm font-medium transition-colors shadow-sm cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Simulate Ingestion
+              </button>
             </div>
           </div>
         </div>
@@ -270,9 +517,6 @@ export function TransactionMonitor() {
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
                     ML Score
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
-                    Blockchain
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wide">
                     Smart Contract
@@ -313,7 +557,9 @@ export function TransactionMonitor() {
                         setLiveIFMsg(null);
                       }}
                     >
-                      <td className="px-4 py-3 text-xs font-mono text-[#6B7280] font-medium">{index + 1}</td>
+                      <td className="px-4 py-3 text-xs font-mono text-[#6B7280] font-medium">
+                        {(pagination.page - 1) * pagination.limit + index + 1}
+                      </td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-[#2471A3] text-white">
                           {tx.type}
@@ -329,17 +575,22 @@ export function TransactionMonitor() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <div className="w-16 bg-[#F4F6F9] rounded-full h-2">
+                          <div className="w-16 bg-[#F4F6F9] rounded-full h-2 overflow-hidden">
                             <div
-                              className="bg-[#C0392B] h-2 rounded-full"
-                              style={{ width: `${tx.mlScore * 100}%` }}
+                              className={`h-2 rounded-full transition-all duration-500 ${
+                                tx.mlScore >= 0.8
+                                  ? 'bg-[#C0392B]'
+                                  : tx.mlScore >= 0.6
+                                  ? 'bg-[#E8A020]'
+                                  : tx.mlScore >= 0.4
+                                  ? 'bg-[#2471A3]'
+                                  : 'bg-[#2E7D52]'
+                              }`}
+                              style={{ width: `${Math.min(Math.max(tx.mlScore * 100, 0), 100)}%` }}
                             />
                           </div>
                           <span className="text-xs font-mono">{tx.mlScore.toFixed(2)}</span>
                         </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={tx.blockchainStatus} variant="filled" />
                       </td>
                       <td className="px-4 py-3">
                         <StatusBadge
@@ -357,6 +608,137 @@ export function TransactionMonitor() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Pagination Controls (Max 15 items per page) */}
+          <div className="border-t border-[#DDE1E7] bg-white px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
+            <div className="text-xs sm:text-sm text-[#6B7280]">
+              {pagination.total > 0 ? (
+                <>
+                  Showing{' '}
+                  <span className="font-semibold text-[#1C1C1E]">
+                    {(pagination.page - 1) * pagination.limit + 1}
+                  </span>{' '}
+                  to{' '}
+                  <span className="font-semibold text-[#1C1C1E]">
+                    {Math.min(pagination.page * pagination.limit, pagination.total)}
+                  </span>{' '}
+                  of{' '}
+                  <span className="font-semibold text-[#1C1C1E]">{pagination.total}</span>{' '}
+                  transactions
+                  <span className="ml-2 text-xs text-[#9CA3AF]">(15 per page)</span>
+                </>
+              ) : (
+                <span>No transactions to display</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {/* First Page */}
+              <button
+                type="button"
+                onClick={() => setCurrentPage(1)}
+                disabled={pagination.page <= 1 || loading}
+                title="First Page"
+                className={`p-1.5 rounded border border-[#DDE1E7] flex items-center justify-center transition-colors ${
+                  pagination.page <= 1 || loading
+                    ? 'text-[#9CA3AF] bg-[#F4F6F9] cursor-not-allowed'
+                    : 'text-[#374151] hover:bg-[#F4F6F9] hover:text-[#1A3C5E]'
+                }`}
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+
+              {/* Prev Page */}
+              <button
+                type="button"
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={!pagination.has_prev || loading}
+                title="Previous Page"
+                className={`px-2.5 py-1.5 rounded border border-[#DDE1E7] flex items-center gap-1 text-xs font-medium transition-colors ${
+                  !pagination.has_prev || loading
+                    ? 'text-[#9CA3AF] bg-[#F4F6F9] cursor-not-allowed'
+                    : 'text-[#374151] hover:bg-[#F4F6F9] hover:text-[#1A3C5E]'
+                }`}
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Prev</span>
+              </button>
+
+              {/* Page Number Buttons */}
+              <div className="flex items-center gap-1 mx-1">
+                {Array.from({ length: pagination.total_pages }, (_, i) => i + 1)
+                  .filter(pageNum => {
+                    if (pagination.total_pages <= 7) return true;
+                    if (pageNum === 1 || pageNum === pagination.total_pages) return true;
+                    return Math.abs(pageNum - pagination.page) <= 1;
+                  })
+                  .reduce<(number | string)[]>((acc, pageNum, idx, arr) => {
+                    if (idx > 0 && pageNum - (arr[idx - 1] as number) > 1) {
+                      acc.push('...');
+                    }
+                    acc.push(pageNum);
+                    return acc;
+                  }, [])
+                  .map((item, idx) => {
+                    if (item === '...') {
+                      return (
+                        <span key={`ellipsis-${idx}`} className="px-2 py-1 text-xs text-[#9CA3AF]">
+                          ...
+                        </span>
+                      );
+                    }
+                    const pageNum = item as number;
+                    const isActive = pageNum === pagination.page;
+                    return (
+                      <button
+                        key={pageNum}
+                        type="button"
+                        onClick={() => setCurrentPage(pageNum)}
+                        disabled={loading}
+                        className={`min-w-[32px] h-8 px-2 rounded text-xs font-semibold transition-colors ${
+                          isActive
+                            ? 'bg-[#1A3C5E] text-white shadow-sm'
+                            : 'border border-[#DDE1E7] text-[#374151] hover:bg-[#F4F6F9]'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+              </div>
+
+              {/* Next Page */}
+              <button
+                type="button"
+                onClick={() => setCurrentPage(prev => Math.min(pagination.total_pages, prev + 1))}
+                disabled={!pagination.has_next || loading}
+                title="Next Page"
+                className={`px-2.5 py-1.5 rounded border border-[#DDE1E7] flex items-center gap-1 text-xs font-medium transition-colors ${
+                  !pagination.has_next || loading
+                    ? 'text-[#9CA3AF] bg-[#F4F6F9] cursor-not-allowed'
+                    : 'text-[#374151] hover:bg-[#F4F6F9] hover:text-[#1A3C5E]'
+                }`}
+              >
+                <span>Next</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Last Page */}
+              <button
+                type="button"
+                onClick={() => setCurrentPage(pagination.total_pages)}
+                disabled={pagination.page >= pagination.total_pages || loading}
+                title="Last Page"
+                className={`p-1.5 rounded border border-[#DDE1E7] flex items-center justify-center transition-colors ${
+                  pagination.page >= pagination.total_pages || loading
+                    ? 'text-[#9CA3AF] bg-[#F4F6F9] cursor-not-allowed'
+                    : 'text-[#374151] hover:bg-[#F4F6F9] hover:text-[#1A3C5E]'
+                }`}
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -438,10 +820,18 @@ export function TransactionMonitor() {
               <div>
                 <h3 className="font-bold text-sm mb-3">Risk Score</h3>
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="flex-1 bg-[#F4F6F9] rounded-full h-4">
+                  <div className="flex-1 bg-[#F4F6F9] rounded-full h-4 overflow-hidden">
                     <div
-                      className="bg-[#C0392B] h-4 rounded-full"
-                      style={{ width: `${selectedTx.mlScore * 100}%` }}
+                      className={`h-4 rounded-full transition-all duration-500 ${
+                        selectedTx.mlScore >= 0.8
+                          ? 'bg-[#C0392B]'
+                          : selectedTx.mlScore >= 0.6
+                          ? 'bg-[#E8A020]'
+                          : selectedTx.mlScore >= 0.4
+                          ? 'bg-[#2471A3]'
+                          : 'bg-[#2E7D52]'
+                      }`}
+                      style={{ width: `${Math.min(Math.max(selectedTx.mlScore * 100, 0), 100)}%` }}
                     />
                   </div>
                   <span className="font-mono font-bold text-lg">{selectedTx.mlScore.toFixed(2)}</span>
@@ -519,10 +909,10 @@ export function TransactionMonitor() {
                           </div>
                           <span className="text-sm font-mono">{score.toFixed(2)}</span>
                         </div>
-                        <div className="w-full bg-[#F4F6F9] rounded-full h-2">
+                        <div className="w-full bg-[#F4F6F9] rounded-full h-2 overflow-hidden">
                           <div
-                            className="bg-[#2471A3] h-2 rounded-full"
-                            style={{ width: `${score * 100}%` }}
+                            className="bg-[#2471A3] h-2 rounded-full transition-all duration-500"
+                            style={{ width: `${Math.min(Math.max(score * 100, 0), 100)}%` }}
                           />
                         </div>
                       </div>
@@ -544,30 +934,6 @@ export function TransactionMonitor() {
                   </div>
                 </div>
               )}
-
-              {/* Blockchain verification */}
-              <div className="bg-[#F4F6F9] rounded-lg p-4">
-                <h3 className="font-bold text-sm mb-3">Blockchain Verification</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[#6B7280]">Hash:</span>
-                    <span className="font-mono text-xs">{selectedTx.blockchainHash}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[#6B7280]">Status:</span>
-                    <div className="flex items-center gap-2">
-                      {selectedTx.blockchainStatus === 'VERIFIED' ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-[#2E7D52]" />
-                          <span className="text-[#2E7D52] font-medium">VERIFIED</span>
-                        </>
-                      ) : (
-                        <span className="text-[#6B7280]">{selectedTx.blockchainStatus}</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
 
               {/* Smart contract */}
               <div className="bg-[#F4F6F9] rounded-lg p-4">
@@ -604,6 +970,283 @@ export function TransactionMonitor() {
                   {actionLoading ? 'Clearing...' : 'Clear'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Simulate Ingestion Modal */}
+      {isIngestModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-[#DDE1E7]">
+            {/* Modal Header */}
+            <div className="sticky top-0 bg-white border-b border-[#DDE1E7] px-6 py-4 flex items-center justify-between z-10">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-blue-50 text-[#1A3C5E] rounded-lg">
+                    <Zap className="w-5 h-5 text-[#2471A3]" />
+                  </div>
+                  <h2 className="font-bold text-lg text-[#1C1C1E]">Simulate Transaction Ingestion</h2>
+                </div>
+                <p className="text-xs text-[#6B7280] mt-0.5">
+                  Real-time pipeline ingestion with asynchronous 3-model scoring (IF 40%, AE 30%, LSTM 30%)
+                </p>
+              </div>
+              <button
+                onClick={() => setIsIngestModalOpen(false)}
+                className="p-1.5 hover:bg-[#F4F6F9] rounded-lg text-[#6B7280] transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Presets */}
+              <div>
+                <label className="block text-xs font-semibold text-[#475569] uppercase tracking-wider mb-2">
+                  Quick Simulation Presets
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('NORMAL')}
+                    className="p-3 text-left border rounded-lg hover:border-[#2E7D52] hover:bg-emerald-50/40 transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-1.5 font-semibold text-xs text-[#2E7D52] mb-1">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      Normal Subsidy
+                    </div>
+                    <p className="text-[11px] text-[#6B7280]">KES 48,750 daytime grant disbursement (Low Risk)</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('SURGE')}
+                    className="p-3 text-left border rounded-lg hover:border-[#C0392B] hover:bg-red-50/40 transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-1.5 font-semibold text-xs text-[#C0392B] mb-1">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      Midnight Surge
+                    </div>
+                    <p className="text-[11px] text-[#6B7280]">KES 2,000,000 at 02:30 AM off-hours drain (Critical)</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('GHOST')}
+                    className="p-3 text-left border rounded-lg hover:border-[#E8A020] hover:bg-amber-50/40 transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-1.5 font-semibold text-xs text-[#E8A020] mb-1">
+                      <Activity className="w-3.5 h-3.5" />
+                      Ghost Enrollment Spike
+                    </div>
+                    <p className="text-[11px] text-[#6B7280]">Inflated KES 980,000 procurement invoice (High Risk)</p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Ingestion Form */}
+              <form onSubmit={handleSimulateIngest} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] mb-1">Target School</label>
+                    <select
+                      className="w-full border border-[#DDE1E7] rounded px-3 py-2 text-sm bg-white"
+                      value={ingestForm.school_id}
+                      onChange={(e) => setIngestForm({ ...ingestForm, school_id: e.target.value })}
+                      required
+                    >
+                      {availableSchools.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.enrollment} students)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] mb-1">Transaction Type</label>
+                    <select
+                      className="w-full border border-[#DDE1E7] rounded px-3 py-2 text-sm bg-white"
+                      value={ingestForm.type}
+                      onChange={(e) => setIngestForm({ ...ingestForm, type: e.target.value })}
+                    >
+                      <option value="SUBSIDY">Government Subsidy Disbursement</option>
+                      <option value="PROCUREMENT">Supplier Procurement Payment</option>
+                      <option value="MPESA">M-Pesa Direct Feeding Fee</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] mb-1">Amount (KES)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="1"
+                      className="w-full border border-[#DDE1E7] rounded px-3 py-2 text-sm"
+                      value={ingestForm.amount}
+                      onChange={(e) => setIngestForm({ ...ingestForm, amount: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] mb-1">Payment Method</label>
+                    <select
+                      className="w-full border border-[#DDE1E7] rounded px-3 py-2 text-sm bg-white"
+                      value={ingestForm.payment_method}
+                      onChange={(e) => setIngestForm({ ...ingestForm, payment_method: e.target.value })}
+                    >
+                      <option value="BANK_TRANSFER">Bank Wire Transfer</option>
+                      <option value="MPESA">M-Pesa Bulk Disburse</option>
+                      <option value="CHEQUE">Bankers Cheque</option>
+                      <option value="SYSTEM">System Ledger Clearing</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] mb-1">Transacted Timestamp</label>
+                    <input
+                      type="datetime-local"
+                      className="w-full border border-[#DDE1E7] rounded px-3 py-2 text-sm"
+                      value={ingestForm.transacted_at}
+                      onChange={(e) => setIngestForm({ ...ingestForm, transacted_at: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] mb-1">Reference Number (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. MP-2026-X99"
+                      className="w-full border border-[#DDE1E7] rounded px-3 py-2 text-sm"
+                      value={ingestForm.reference_no}
+                      onChange={(e) => setIngestForm({ ...ingestForm, reference_no: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-[#475569] mb-1">Description / Memo</label>
+                    <input
+                      type="text"
+                      className="w-full border border-[#DDE1E7] rounded px-3 py-2 text-sm"
+                      value={ingestForm.description}
+                      onChange={(e) => setIngestForm({ ...ingestForm, description: e.target.value })}
+                      required
+                    />
+                  </div>
+                </div>
+
+                {ingestError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-[#C0392B]">
+                    {ingestError}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsIngestModalOpen(false)}
+                    className="px-4 py-2 border border-[#DDE1E7] rounded-lg text-sm text-[#475569] hover:bg-[#F4F6F9]"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={ingestStatus === 'QUEUED' || ingestStatus === 'EVALUATING'}
+                    className="flex items-center gap-2 bg-[#1A3C5E] hover:bg-[#2E7D52] text-white px-5 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {ingestStatus === 'QUEUED' || ingestStatus === 'EVALUATING' ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Evaluating Anomaly Models...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4" />
+                        Ingest &amp; Score Transaction
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+
+              {/* Progress & Scoring Result Card */}
+              {(ingestStatus === 'QUEUED' || ingestStatus === 'EVALUATING') && (
+                <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg space-y-2 animate-pulse">
+                  <div className="flex items-center justify-between text-xs font-semibold text-[#6B21A8]">
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Evaluating 3-Model Ensemble (IF 40% + AE 30% + LSTM 30%)...
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-purple-200 text-purple-900 font-mono">EVALUATING</span>
+                  </div>
+                  <p className="text-[11px] text-[#6B7280]">
+                    Transaction submitted with status PENDING and queued for background feature extraction &amp; scoring.
+                  </p>
+                </div>
+              )}
+
+              {ingestStatus === 'SCORED' && ingestResult && (
+                <div className={`p-4 rounded-xl border ${
+                  ingestResult.risk_tier === 'CRITICAL' ? 'bg-red-50 border-red-300' :
+                  ingestResult.risk_tier === 'HIGH' ? 'bg-amber-50 border-amber-300' :
+                  ingestResult.risk_tier === 'MEDIUM' ? 'bg-blue-50 border-blue-300' :
+                  'bg-emerald-50 border-emerald-300'
+                }`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-[#1C1C1E]">
+                        Scoring Complete
+                      </span>
+                      <RiskBadge tier={ingestResult.risk_tier} />
+                      <span className="text-xs px-2 py-0.5 rounded bg-white font-mono border">
+                        Status: <b>{ingestResult.status}</b>
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs text-[#6B7280]">Composite Score: </span>
+                      <span className="font-mono font-bold text-sm">
+                        {ingestResult.risk_score?.toFixed(4) || ingestResult.mlScore?.toFixed(4)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Model Scores Pill Breakdown */}
+                  {ingestResult.modelScores && (
+                    <div className="grid grid-cols-3 gap-2 mb-3">
+                      <div className="bg-white/80 p-2 rounded border text-center">
+                        <div className="text-[10px] text-[#6B7280] font-mono">Isolation Forest (40%)</div>
+                        <div className="font-mono font-bold text-xs">{ingestResult.modelScores.IF?.toFixed(4)}</div>
+                      </div>
+                      <div className="bg-white/80 p-2 rounded border text-center">
+                        <div className="text-[10px] text-[#6B7280] font-mono">Autoencoder (30%)</div>
+                        <div className="font-mono font-bold text-xs">{ingestResult.modelScores.AE?.toFixed(4)}</div>
+                      </div>
+                      <div className="bg-white/80 p-2 rounded border text-center">
+                        <div className="text-[10px] text-[#6B7280] font-mono">LSTM Autoencoder (30%)</div>
+                        <div className="font-mono font-bold text-xs">{ingestResult.modelScores.LSTM?.toFixed(4)}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alert notification message */}
+                  {(ingestResult.risk_tier === 'HIGH' || ingestResult.risk_tier === 'CRITICAL') && (
+                    <div className="p-2.5 bg-white/90 rounded border border-red-200 text-xs text-[#991B1B] flex items-start gap-2">
+                      <ShieldAlert className="w-4 h-4 text-[#C0392B] flex-shrink-0 mt-0.5" />
+                      <div>
+                        <b>Automated Alert Generated:</b> Record added to fraud alerts and sent to all active investigators.
+                        {ingestResult.risk_tier === 'CRITICAL' && (
+                          <span className="block mt-0.5 text-[#B91C1C] font-semibold">
+                            Critical severity reached &mdash; transaction status automatically updated to FLAGGED.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

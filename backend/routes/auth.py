@@ -10,9 +10,10 @@ Implements:
 
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -215,17 +216,19 @@ async def refresh(
     )
 
 
+optional_logout_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+
 @router.post(
     "/logout",
     summary="Log out of the system",
     description="Blacklists the current access token in Redis to prevent reuse.",
 )
 async def logout(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    token: Annotated[Optional[str], Depends(optional_logout_scheme)] = None,
     redis = Depends(get_redis),
 ):
-    if redis is not None:
+    if redis is not None and token:
         try:
             payload = decode_token(token)
             jti = payload.get("jti")

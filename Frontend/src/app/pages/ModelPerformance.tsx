@@ -67,10 +67,15 @@ export function ModelPerformance() {
   const [savingWeights, setSavingWeights] = useState(false);
   const [weightToast, setWeightToast] = useState<string | null>(null);
 
-  // Live Score Simulator state in Weights tab
+  // Live Score Simulator state in Weights tab (synced with live inference tests)
   const [simIfScore, setSimIfScore] = useState<number>(0.72);
   const [simAeScore, setSimAeScore] = useState<number>(0.88);
   const [simLstmScore, setSimLstmScore] = useState<number>(0.85);
+  const [liveModelScores, setLiveModelScores] = useState<Record<string, number>>({
+    'isolation-forest': 0.24,
+    autoencoder: 0.26,
+    lstm: 0.46,
+  });
 
   useEffect(() => {
     async function loadOverview() {
@@ -217,6 +222,26 @@ export function ModelPerformance() {
                       {model.roc_auc !== undefined ? model.roc_auc.toFixed(4) : 'Unavailable'}
                     </span>
                   </div>
+                  {liveModelScores[model.id] !== undefined && (
+                    <div className="pt-1.5 mt-1.5 border-t border-[#E2E8F0]">
+                      <div className="flex justify-between text-[11px] mb-1">
+                        <span className="text-[#64748B]">Last Test Score:</span>
+                        <span className="font-bold text-[#1A3C5E]">
+                          {liveModelScores[model.id].toFixed(4)}
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className={`h-1.5 rounded-full transition-all duration-500 ${
+                            liveModelScores[model.id] >= (model.threshold ?? 0.7)
+                              ? 'bg-[#C0392B]'
+                              : 'bg-[#2E7D52]'
+                          }`}
+                          style={{ width: `${Math.min(liveModelScores[model.id] * 100, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between text-[11px] text-[#6B7280] font-mono pt-2 border-t border-gray-100">
@@ -279,7 +304,20 @@ export function ModelPerformance() {
         {/* Tab 1: Live Interactive Inference Tester */}
         {activeTab === 'tester' && (
           <div>
-            <IsolationForestTester weights={weights} />
+            <IsolationForestTester
+              weights={weights}
+              selectedModelId={selectedModel?.id}
+              onScoresUpdated={({ ifScore, aeScore, lstmScore }) => {
+                setSimIfScore(Number(ifScore.toFixed(4)));
+                setSimAeScore(Number(aeScore.toFixed(4)));
+                setSimLstmScore(Number(lstmScore.toFixed(4)));
+                setLiveModelScores({
+                  'isolation-forest': ifScore,
+                  autoencoder: aeScore,
+                  lstm: lstmScore,
+                });
+              }}
+            />
           </div>
         )}
 

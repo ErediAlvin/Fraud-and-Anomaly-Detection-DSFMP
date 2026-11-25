@@ -140,8 +140,12 @@ class AutoencoderFraudModel:
 
         denom = max(log_p99 - log_low, 1e-6)
         scaled_unit = (log_err - log_low) / denom
-        # Map [0, 1] -> [0.05, 0.68]; errors > P99 extrapolate smoothly toward 1.0
-        normalized = 0.05 + (self._calibration_target_p99 - 0.05) * scaled_unit
+        # Map [0, 1] -> [0.05, 0.68]; errors above the 0.70 threshold knee saturate smoothly toward 1.0
+        slope = self._calibration_target_p99 - 0.05
+        linear_part = 0.05 + slope * scaled_unit
+        knee = (0.70 - 0.05) / max(slope, 1e-6)
+        above_knee = 0.70 + 0.30 * np.tanh(np.maximum(0.0, scaled_unit - knee) * 0.22)
+        normalized = np.where(scaled_unit <= knee, linear_part, above_knee)
         return np.round(np.clip(normalized, 0.0000, 1.0000), 4)
 
     def predict(
